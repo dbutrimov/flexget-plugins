@@ -29,6 +29,22 @@ class LostFilmUrlRewrite(object):
         quality: sd
     """
 
+    config = {}
+
+    schema = {
+        'type': 'object',
+        'properties': {
+            'quality': {'type': 'string', 'format': 'regex'}
+        },
+        'additionalProperties': False
+    }
+
+    def on_task_start(self, task, config):
+        if not isinstance(config, dict):
+            log.verbose('Config was not determined - use default.')
+        else:
+            self.config = config
+
     def url_rewritable(self, task, entry):
         url = entry['url']
         if download_url_regexp.search(url):
@@ -36,7 +52,7 @@ class LostFilmUrlRewrite(object):
         if details_url_regexp.search(url):
             return True
 
-        log.warning('invalid url: %s' % url)
+        log.verbose('Url are not supported: %s' % url)
         return False
 
     def url_rewrite(self, task, entry):
@@ -116,17 +132,28 @@ class LostFilmUrlRewrite(object):
                 return
             torrents_html = str(torrents_response.content)
 
+        quality = self.config.get('quality')
+        if not isinstance(quality, str):
+            quality = '.*'
+        quality_regexp = re.compile(quality, flags=re.IGNORECASE)
+
         log.verbose('5. Parse torrent links ...')
 
-        table_tree = html.fromstring(torrents_html)
-        table_nodes = table_tree.xpath('//table')
+        torrents_tree = html.fromstring(torrents_html)
+        table_nodes = torrents_tree.xpath('//table')
         for table_node in table_nodes:
-            torrent_links = table_node.xpath('.//a/@href')
-            link_count = len(torrent_links)
-            if link_count > 0:
-                torrent_link = torrent_links[0]
-                entry['url'] = torrent_link
-                log.verbose('Field `%s` is now `%s`' % ('url', torrent_link))
+            link_nodes = table_node.xpath('.//a')
+            if len(link_nodes) > 0:
+                link_node = link_nodes[0]
+                torrent_link = link_node.get('href')
+                description_text = link_node.text
+                if quality_regexp.search(description_text):
+                    log.verbose('5.1. Direct link are detected! [ quality: `%s`, description: `%s` ]' % (quality, description_text))
+                    entry['url'] = torrent_link
+                    log.verbose('Field `%s` is now `%s`' % ('url', torrent_link))
+                    return
+
+        log.error('Direct link are not received :(')
 
 
 @event('plugin.register')
