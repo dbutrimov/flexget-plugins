@@ -8,7 +8,7 @@ onclick_pattern = re.compile(r'\(\\\'(.+)\\\',\s*\\\'(.+)\\\',\s*\\\'(.+)\\\'\)'
 replace_location_pattern = re.compile(r'location\.replace\("(.+)"\);')
 
 cookie = 'uid=821592; pass=cdce3f7776545ec7731de19a5706dbef'
-url = 'http://www.lostfilm.tv/details.php?id=19716'
+url = 'http://www.lostfilm.tv/details.php?id=19736'
 
 user_agent = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/53.0.2785.143 Safari/537.36'
 
@@ -22,7 +22,7 @@ opener.addheaders = headers
 response = opener.open(url)
 h = response.read()
 
-#soup = BeautifulSoup(str(h), 'html.parser')
+# soup = BeautifulSoup(str(h), 'html.parser')
 
 tree = html.fromstring(str(h))
 nodes = tree.xpath('//div[@class="mid"]')
@@ -51,7 +51,16 @@ for node in nodes:
         response3 = opener.open(redirect_url)
         h3 = response3.read()
 
-        f = open('c' + c + 's' + s + 'e' + e + '.html', 'wb')
-        f.write(h3)
-        f.close()
+        table_tree = html.fromstring(str(h3))
+        table_nodes = table_tree.xpath('//table')
+        for table_node in table_nodes:
+            torrent_links = table_node.xpath('.//a/@href')
+            link_count = len(torrent_links)
+            if link_count > 0:
+                torrent_link = torrent_links[0]
+                print(torrent_link)
+
+        # f = open('c' + c + 's' + s + 'e' + e + '.html', 'wb')
+        # f.write(h3)
+        # f.close()
 
