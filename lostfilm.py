@@ -26,7 +26,7 @@ class LostFilmUrlRewrite(object):
     Example::
 
       lostfilm:
-        quality: sd
+        regexp: '1080p'
     """
 
     config = {}
@@ -34,7 +34,7 @@ class LostFilmUrlRewrite(object):
     schema = {
         'type': 'object',
         'properties': {
-            'quality': {'type': 'string', 'format': 'regex'}
+            'regexp': {'type': 'string', 'format': 'regex'}
         },
         'additionalProperties': False
     }
@@ -132,10 +132,10 @@ class LostFilmUrlRewrite(object):
                 return
             torrents_html = str(torrents_response.content)
 
-        quality = self.config.get('quality')
-        if not isinstance(quality, str):
-            quality = '.*'
-        quality_regexp = re.compile(quality, flags=re.IGNORECASE)
+        text_pattern = self.config.get('regexp')
+        if not isinstance(text_pattern, str):
+            text_pattern = '.*'
+        text_regexp = re.compile(text_pattern, flags=re.IGNORECASE)
 
         log.verbose('5. Parse torrent links ...')
 
@@ -147,8 +147,8 @@ class LostFilmUrlRewrite(object):
                 link_node = link_nodes[0]
                 torrent_link = link_node.get('href')
                 description_text = link_node.text
-                if quality_regexp.search(description_text):
-                    log.verbose('5.1. Direct link are detected! [ quality: `%s`, description: `%s` ]' % (quality, description_text))
+                if text_regexp.search(description_text):
+                    log.verbose('5.1. Direct link are detected! [ regexp: `%s`, description: `%s` ]' % (text_pattern, description_text))
                     entry['url'] = torrent_link
                     log.verbose('Field `%s` is now `%s`' % ('url', torrent_link))
                     return
