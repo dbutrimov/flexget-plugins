@@ -1,6 +1,6 @@
 from __future__ import unicode_literals, division, absolute_import
 
-from lxml import html
+from bs4 import BeautifulSoup
 import re
 
 import logging
@@ -15,7 +15,9 @@ download_url_regexp = re.compile(r'^https?://(www\.)?lostfilm\.tv/download\.php\
 details_url_regexp = re.compile(r'^https?://(www\.)?lostfilm\.tv/details\.php\?id=\d+.*$', flags=re.IGNORECASE)
 replace_download_url_regexp = re.compile(r'/download\.php', flags=re.IGNORECASE)
 
-onclick_regexp = re.compile(r'\(\\?\'(.+?)\\?\',\s*\\?\'(.+?)\\?\',\s*\\?\'(.+?)\\?\'\)', flags=re.IGNORECASE)
+show_all_releases_regexp = re.compile(
+    r'ShowAllReleases\(\\?[\'"](.+?)\\?[\'"],\s*\\?[\'"](.+?)\\?[\'"],\s*\\?[\'"](.+?)\\?[\'"]\)',
+    flags=re.IGNORECASE)
 replace_location_regexp = re.compile(r'location\.replace\("(.+?)"\);', flags=re.IGNORECASE)
 
 
@@ -79,26 +81,24 @@ class LostFilmUrlRewrite(object):
         log.verbose('3. Parse details page `%s`...' % details_url)
         log.verbose('3.1. Find <div class="mid"> ...')
 
-        details_tree = html.fromstring(details_html)
-        mid_nodes = details_tree.xpath('//div[@class="mid"]')
-        if len(mid_nodes) <= 0:
-            log.error('len(mid_nodes) <= 0')
+        details_tree = BeautifulSoup(details_html, 'html.parser')
+        mid_node = details_tree.find('div', class_='mid')
+        if not mid_node:
+            log.error('not mid_node')
             entry['url'] = None
             return
-        mid_node = mid_nodes[0]
 
         log.verbose('3.2. Find <a class="a_download"> ...')
 
-        onclick_nodes = mid_node.xpath('.//a[@class="a_download" and starts-with(@onclick, "ShowAllReleases")]/@onclick')
-        if len(onclick_nodes) <= 0:
-            log.error('len(onclick_nodes) <= 0')
+        onclick_node = mid_node.find('a', class_='a_download', onclick=show_all_releases_regexp)
+        if not onclick_node:
+            log.error('not onclick_node')
             entry['url'] = None
             return
-        onclick_node = onclick_nodes[0]
 
         log.verbose('3.3. Parse `onclick` parameters <a class="a_download"> ...')
 
-        onclick_match = onclick_regexp.search(onclick_node)
+        onclick_match = show_all_releases_regexp.search(onclick_node.get('onclick'))
         if not onclick_match:
             log.error('not onclick_match')
             entry['url'] = None
@@ -139,16 +139,16 @@ class LostFilmUrlRewrite(object):
 
         log.verbose('5. Parse torrent links ...')
 
-        torrents_tree = html.fromstring(torrents_html)
-        table_nodes = torrents_tree.xpath('//table')
+        torrents_tree = BeautifulSoup(torrents_html, 'html.parser')
+        table_nodes = torrents_tree.find_all('table')
         for table_node in table_nodes:
-            link_nodes = table_node.xpath('.//a')
-            if len(link_nodes) > 0:
-                link_node = link_nodes[0]
+            link_node = table_node.find('a')
+            if link_node:
                 torrent_link = link_node.get('href')
                 description_text = link_node.text
                 if text_regexp.search(description_text):
-                    log.verbose('5.1. Direct link are detected! [ regexp: `%s`, description: `%s` ]' % (text_pattern, description_text))
+                    log.verbose('5.1. Direct link are detected! [ regexp: `%s`, description: `%s` ]' %
+                                (text_pattern, description_text))
                     entry['url'] = torrent_link
                     log.verbose('Field `%s` is now `%s`' % ('url', torrent_link))
                     return
