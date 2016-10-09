@@ -1,7 +1,8 @@
 from __future__ import unicode_literals, division, absolute_import
+from builtins import *  # pylint: disable=unused-import, redefined-builtin
 
-from bs4 import BeautifulSoup
 import re
+from bs4 import BeautifulSoup
 
 import logging
 
@@ -11,8 +12,8 @@ from flexget.utils import requests
 
 log = logging.getLogger('lostfilm')
 
-download_url_regexp = re.compile(r'^https?://(www\.)?lostfilm\.tv/download\.php\?id=\d+.*$', flags=re.IGNORECASE)
-details_url_regexp = re.compile(r'^https?://(www\.)?lostfilm\.tv/details\.php\?id=\d+.*$', flags=re.IGNORECASE)
+download_url_regexp = re.compile(r'^https?://(?:www\.)?lostfilm\.tv/download\.php\?id=(\d+).*$', flags=re.IGNORECASE)
+details_url_regexp = re.compile(r'^https?://(?:www\.)?lostfilm\.tv/details\.php\?id=(\d+).*$', flags=re.IGNORECASE)
 replace_download_url_regexp = re.compile(r'/download\.php', flags=re.IGNORECASE)
 
 show_all_releases_regexp = re.compile(
@@ -54,21 +55,20 @@ class LostFilmUrlRewrite(object):
         if details_url_regexp.search(url):
             return True
 
-        log.verbose('Url are not supported: %s' % url)
         return False
 
     def url_rewrite(self, task, entry):
         details_url = entry['url']
 
-        log.verbose('1. Start with url `%s`...' % details_url)
+        # log.verbose('1. Start with url `%s`...' % details_url)
 
         # Convert download url to details if needed
         if download_url_regexp.search(details_url):
             new_url = replace_download_url_regexp.sub('/details.php', details_url)
             details_url = new_url
-            log.verbose('1.1. Rewrite url to `%s`' % details_url)
+            # log.verbose('1.1. Rewrite url to `%s`' % details_url)
 
-        log.verbose('2. Download details page `%s`...' % details_url)
+        # log.verbose('2. Download details page `%s`...' % details_url)
 
         try:
             details_response = task.requests.get(details_url)
@@ -76,10 +76,10 @@ class LostFilmUrlRewrite(object):
             log.error('Error while fetching page: %s' % e)
             entry['url'] = None
             return
-        details_html = str(details_response.content)
+        details_html = details_response.text
 
-        log.verbose('3. Parse details page `%s`...' % details_url)
-        log.verbose('3.1. Find <div class="mid"> ...')
+        # log.verbose('3. Parse details page `%s`...' % details_url)
+        # log.verbose('3.1. Find <div class="mid"> ...')
 
         details_tree = BeautifulSoup(details_html, 'html.parser')
         mid_node = details_tree.find('div', class_='mid')
@@ -88,7 +88,7 @@ class LostFilmUrlRewrite(object):
             entry['url'] = None
             return
 
-        log.verbose('3.2. Find <a class="a_download"> ...')
+        # log.verbose('3.2. Find <a class="a_download"> ...')
 
         onclick_node = mid_node.find('a', class_='a_download', onclick=show_all_releases_regexp)
         if not onclick_node:
@@ -96,7 +96,7 @@ class LostFilmUrlRewrite(object):
             entry['url'] = None
             return
 
-        log.verbose('3.3. Parse `onclick` parameters <a class="a_download"> ...')
+        # log.verbose('3.3. Parse `onclick` parameters <a class="a_download"> ...')
 
         onclick_match = show_all_releases_regexp.search(onclick_node.get('onclick'))
         if not onclick_match:
@@ -108,7 +108,7 @@ class LostFilmUrlRewrite(object):
         episode = onclick_match.group(3)
         torrents_url = 'http://www.lostfilm.tv/nrdr2.php?c=' + category + '&s=' + season + '&e=' + episode
 
-        log.verbose('4. Download torrents page `%s`...' % torrents_url)
+        # log.verbose('4. Download torrents page `%s`...' % torrents_url)
 
         try:
             torrents_response = task.requests.get(torrents_url)
@@ -116,13 +116,13 @@ class LostFilmUrlRewrite(object):
             log.error('Error while fetching page: %s' % e)
             entry['url'] = None
             return
-        torrents_html = str(torrents_response.content)
+        torrents_html = torrents_response.text
 
         replace_location_match = replace_location_regexp.search(torrents_html)
         if replace_location_match:
             replace_location_url = replace_location_match.group(1)
 
-            log.verbose('4.1. Redirect to `%s`...' % replace_location_url)
+            # log.verbose('4.1. Redirect to `%s`...' % replace_location_url)
 
             try:
                 torrents_response = task.requests.get(replace_location_url)
@@ -130,14 +130,14 @@ class LostFilmUrlRewrite(object):
                 log.error('Error while fetching page: %s' % e)
                 entry['url'] = None
                 return
-            torrents_html = str(torrents_response.content)
+            torrents_html = torrents_response.text
 
         text_pattern = self.config.get('regexp')
         if not isinstance(text_pattern, str):
             text_pattern = '.*'
         text_regexp = re.compile(text_pattern, flags=re.IGNORECASE)
 
-        log.verbose('5. Parse torrent links ...')
+        # log.verbose('5. Parse torrent links ...')
 
         torrents_tree = BeautifulSoup(torrents_html, 'html.parser')
         table_nodes = torrents_tree.find_all('table')
@@ -147,13 +147,14 @@ class LostFilmUrlRewrite(object):
                 torrent_link = link_node.get('href')
                 description_text = link_node.text
                 if text_regexp.search(description_text):
-                    log.verbose('5.1. Direct link are detected! [ regexp: `%s`, description: `%s` ]' %
-                                (text_pattern, description_text))
+                    # log.verbose('5.1. Direct link are detected! [ regexp: `%s`, description: `%s` ]' %
+                    #             (text_pattern, description_text))
                     entry['url'] = torrent_link
                     log.verbose('Field `%s` is now `%s`' % ('url', torrent_link))
                     return
 
         log.error('Direct link are not received :(')
+        entry['url'] = None
 
 
 @event('plugin.register')
