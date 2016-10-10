@@ -50,9 +50,9 @@ class LostFilmUrlRewrite(object):
 
     def url_rewritable(self, task, entry):
         url = entry['url']
-        if download_url_regexp.search(url):
+        if download_url_regexp.match(url):
             return True
-        if details_url_regexp.search(url):
+        if details_url_regexp.match(url):
             return True
 
         return False
@@ -63,7 +63,7 @@ class LostFilmUrlRewrite(object):
         # log.verbose('1. Start with url `%s`...' % details_url)
 
         # Convert download url to details if needed
-        if download_url_regexp.search(details_url):
+        if download_url_regexp.match(details_url):
             new_url = replace_download_url_regexp.sub('/details.php', details_url)
             details_url = new_url
             # log.verbose('1.1. Rewrite url to `%s`' % details_url)
@@ -75,7 +75,7 @@ class LostFilmUrlRewrite(object):
         except requests.RequestException as e:
             log.error('Error while fetching page: %s' % e)
             entry['url'] = None
-            return
+            return False
         details_html = details_response.text
 
         # log.verbose('3. Parse details page `%s`...' % details_url)
@@ -86,7 +86,7 @@ class LostFilmUrlRewrite(object):
         if not mid_node:
             log.error('not mid_node')
             entry['url'] = None
-            return
+            return False
 
         # log.verbose('3.2. Find <a class="a_download"> ...')
 
@@ -94,7 +94,7 @@ class LostFilmUrlRewrite(object):
         if not onclick_node:
             log.error('not onclick_node')
             entry['url'] = None
-            return
+            return False
 
         # log.verbose('3.3. Parse `onclick` parameters <a class="a_download"> ...')
 
@@ -102,7 +102,7 @@ class LostFilmUrlRewrite(object):
         if not onclick_match:
             log.error('not onclick_match')
             entry['url'] = None
-            return
+            return False
         category = onclick_match.group(1)
         season = onclick_match.group(2)
         episode = onclick_match.group(3)
@@ -115,7 +115,7 @@ class LostFilmUrlRewrite(object):
         except requests.RequestException as e:
             log.error('Error while fetching page: %s' % e)
             entry['url'] = None
-            return
+            return False
         torrents_html = torrents_response.text
 
         replace_location_match = replace_location_regexp.search(torrents_html)
@@ -129,7 +129,7 @@ class LostFilmUrlRewrite(object):
             except requests.RequestException as e:
                 log.error('Error while fetching page: %s' % e)
                 entry['url'] = None
-                return
+                return False
             torrents_html = torrents_response.text
 
         text_pattern = self.config.get('regexp')
@@ -146,15 +146,16 @@ class LostFilmUrlRewrite(object):
             if link_node:
                 torrent_link = link_node.get('href')
                 description_text = link_node.text
-                if text_regexp.search(description_text):
+                if text_regexp.match(description_text):
                     # log.verbose('5.1. Direct link are detected! [ regexp: `%s`, description: `%s` ]' %
                     #             (text_pattern, description_text))
                     entry['url'] = torrent_link
                     log.verbose('Field `%s` is now `%s`' % ('url', torrent_link))
-                    return
+                    return True
 
         log.error('Direct link are not received :(')
         entry['url'] = None
+        return False
 
 
 @event('plugin.register')
