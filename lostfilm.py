@@ -1,3 +1,4 @@
+# -*- coding: utf-8 -*-
 from __future__ import unicode_literals, division, absolute_import
 from builtins import *  # pylint: disable=unused-import, redefined-builtin
 
@@ -7,6 +8,7 @@ from bs4 import BeautifulSoup
 import logging
 
 from flexget import plugin
+from flexget.entry import Entry
 from flexget.event import event
 from flexget.utils import requests
 
@@ -20,6 +22,15 @@ show_all_releases_regexp = re.compile(
     r'ShowAllReleases\(\\?[\'"](.+?)\\?[\'"],\s*\\?[\'"](.+?)\\?[\'"],\s*\\?[\'"](.+?)\\?[\'"]\)',
     flags=re.IGNORECASE)
 replace_location_regexp = re.compile(r'location\.replace\("(.+?)"\);', flags=re.IGNORECASE)
+
+
+class LostFilmShow(object):
+    titles = []
+    url = ''
+
+    def __init__(self, titles, url):
+        self.titles = titles
+        self.url = url
 
 
 class LostFilmUrlRewrite(object):
@@ -44,7 +55,7 @@ class LostFilmUrlRewrite(object):
 
     def on_task_start(self, task, config):
         if not isinstance(config, dict):
-            log.verbose('Config was not determined - use default.')
+            log.verbose("Config was not determined - use default.")
         else:
             self.config = config
 
@@ -60,61 +71,61 @@ class LostFilmUrlRewrite(object):
     def url_rewrite(self, task, entry):
         details_url = entry['url']
 
-        # log.verbose('1. Start with url `%s`...' % details_url)
+        log.debug("Starting with url `{0}`...".format(details_url))
 
         # Convert download url to details if needed
         if download_url_regexp.match(details_url):
-            new_url = replace_download_url_regexp.sub('/details.php', details_url)
-            details_url = new_url
-            # log.verbose('1.1. Rewrite url to `%s`' % details_url)
+            details_url = replace_download_url_regexp.sub('/details.php', details_url)
+            log.debug("Rewrite url to `{0}`".format(details_url))
 
-        # log.verbose('2. Download details page `%s`...' % details_url)
+        log.debug("Fetching details page `{0}`...".format(details_url))
 
         try:
             details_response = task.requests.get(details_url)
         except requests.RequestException as e:
-            log.error('Error while fetching page: %s' % e)
-            entry['url'] = None
+            reject_reason = "Error while fetching page: {0}".format(e)
+            log.error(reject_reason)
+            entry.reject(reject_reason)
             return False
         details_html = details_response.text
 
-        # log.verbose('3. Parse details page `%s`...' % details_url)
-        # log.verbose('3.1. Find <div class="mid"> ...')
+        log.debug("Parsing details page `{0}`...".format(details_url))
 
         details_tree = BeautifulSoup(details_html, 'html.parser')
         mid_node = details_tree.find('div', class_='mid')
         if not mid_node:
-            log.error('not mid_node')
-            entry['url'] = None
+            reject_reason = "Error while parsing details page: node <div class=`mid`> are not found"
+            log.error(reject_reason)
+            entry.reject(reject_reason)
             return False
-
-        # log.verbose('3.2. Find <a class="a_download"> ...')
 
         onclick_node = mid_node.find('a', class_='a_download', onclick=show_all_releases_regexp)
         if not onclick_node:
-            log.error('not onclick_node')
-            entry['url'] = None
+            reject_reason = "Error while parsing details page: node <a class=`a_download`> are not found"
+            log.error(reject_reason)
+            entry.reject(reject_reason)
             return False
-
-        # log.verbose('3.3. Parse `onclick` parameters <a class="a_download"> ...')
 
         onclick_match = show_all_releases_regexp.search(onclick_node.get('onclick'))
         if not onclick_match:
-            log.error('not onclick_match')
-            entry['url'] = None
+            reject_reason = "Error while parsing details page: " \
+                            "node <a class=`a_download`> have invalid `onclick` attribute"
+            log.error(reject_reason)
+            entry.reject(reject_reason)
             return False
         category = onclick_match.group(1)
         season = onclick_match.group(2)
         episode = onclick_match.group(3)
-        torrents_url = 'http://www.lostfilm.tv/nrdr2.php?c=' + category + '&s=' + season + '&e=' + episode
+        torrents_url = "http://www.lostfilm.tv/nrdr2.php?c={0}&s={1}&e={2}".format(category, season, episode)
 
-        # log.verbose('4. Download torrents page `%s`...' % torrents_url)
+        log.debug(u"Downloading torrents page `{0}`...".format(torrents_url))
 
         try:
             torrents_response = task.requests.get(torrents_url)
         except requests.RequestException as e:
-            log.error('Error while fetching page: %s' % e)
-            entry['url'] = None
+            reject_reason = "Error while fetching page: {0}".format(e)
+            log.error(reject_reason)
+            entry.reject(reject_reason)
             return False
         torrents_html = torrents_response.text
 
@@ -122,13 +133,14 @@ class LostFilmUrlRewrite(object):
         if replace_location_match:
             replace_location_url = replace_location_match.group(1)
 
-            # log.verbose('4.1. Redirect to `%s`...' % replace_location_url)
+            log.debug("Redirecting to `{0}`...".format(replace_location_url))
 
             try:
                 torrents_response = task.requests.get(replace_location_url)
             except requests.RequestException as e:
-                log.error('Error while fetching page: %s' % e)
-                entry['url'] = None
+                reject_reason = "Error while fetching page: {0}".format(e)
+                log.error(reject_reason)
+                entry.reject(reject_reason)
                 return False
             torrents_html = torrents_response.text
 
@@ -137,7 +149,7 @@ class LostFilmUrlRewrite(object):
             text_pattern = '.*'
         text_regexp = re.compile(text_pattern, flags=re.IGNORECASE)
 
-        # log.verbose('5. Parse torrent links ...')
+        log.debug("Parsing torrent links...")
 
         torrents_tree = BeautifulSoup(torrents_html, 'html.parser')
         table_nodes = torrents_tree.find_all('table')
@@ -145,19 +157,127 @@ class LostFilmUrlRewrite(object):
             link_node = table_node.find('a')
             if link_node:
                 torrent_link = link_node.get('href')
-                description_text = link_node.text
-                if text_regexp.match(description_text):
-                    # log.verbose('5.1. Direct link are detected! [ regexp: `%s`, description: `%s` ]' %
-                    #             (text_pattern, description_text))
+                description_text = link_node.get_text()
+                if text_regexp.search(description_text):
+                    log.debug("Torrent link was accepted! [ regexp: `{0}`, description: `{1}` ]".format(
+                              text_pattern, description_text))
                     entry['url'] = torrent_link
-                    log.verbose('Field `%s` is now `%s`' % ('url', torrent_link))
                     return True
+                else:
+                    log.debug("Torrent link was rejected: [ regexp: `{0}`, description: `{1}` ]".format(
+                              text_pattern, description_text))
 
-        log.error('Direct link are not received :(')
-        entry['url'] = None
+        reject_reason = "Torrent link was not detected with regexp `{0}`".format(text_pattern)
+        log.error(reject_reason)
+        entry.reject(reject_reason)
         return False
+
+    def search(self, task, entry, config=None):
+        entries = set()
+
+        serials_url = 'http://www.lostfilm.tv/serials.php'
+
+        log.debug("Fetching serials page `{0}`...".format(serials_url))
+
+        try:
+            serials_response = task.requests.get(serials_url)
+        except requests.RequestException as e:
+            log.error("Error while fetching page: {0}".format(e))
+            return None
+        serials_html = serials_response.text
+
+        log.debug("Parsing serials page `{0}`...".format(serials_url))
+
+        serials_tree = BeautifulSoup(serials_html, 'html.parser')
+        mid_node = serials_tree.find('div', class_='mid')
+        if not mid_node:
+            log.error("Error while parsing details page: node <div class=`mid`> are not found")
+            return None
+
+        shows = set()
+        link_nodes = mid_node.find_all('a', class_='bb_a')
+        log.debug("{0:d} serial node(s) are found".format(len(link_nodes)))
+        for link_node in link_nodes:
+            link_text = link_node.get_text(separator='\n')
+            titles = link_text.splitlines()
+            if len(titles) <= 0:
+                log.error("No titles are found")
+                continue
+
+            titles = [x.strip('()') for x in titles]
+            category_link = "http://www.lostfilm.tv" + link_node.get('href')  # TODO: Add host if needs
+
+            # log.debug("Serial `{0}` was added".format(" / ".join(titles)))
+            shows.add(LostFilmShow(titles, category_link))
+
+        search_regexp = re.compile('^(.*?)\s*s(\d+?)e(\d+?)$', flags=re.IGNORECASE)
+
+        for show in shows:
+            for search_string in entry.get('search_strings', [entry['title']]):
+                search_match = search_regexp.search(search_string)
+                if not search_match:
+                    continue
+                search_title = search_match.group(1)
+                search_season = int(search_match.group(2))
+                search_episode = int(search_match.group(3))
+                if search_title not in show.titles:
+                    continue
+
+                # log.debug('search_title: {0}; search_season: {1}; search_episode: {2}'.format(
+                #     search_title, search_season, search_episode))
+
+                try:
+                    category_response = task.requests.get(show.url)
+                except requests.RequestException as e:
+                    log.error("Error while fetching page: {0}".format(e))
+                    continue
+                category_html = category_response.text
+
+                category_tree = BeautifulSoup(category_html, 'html.parser')
+                mid_node = category_tree.find('div', class_='mid')
+
+                row_nodes = mid_node.find_all('div', class_=re.compile('t_row.*', flags=re.IGNORECASE))
+                for row_node in row_nodes:
+                    ep_node = row_node.find('span', class_='micro')
+                    if not ep_node:
+                        continue
+
+                    ep_regexp = re.compile("(\d+)\s+сезон\s+(\d+)\s+серия", flags=re.IGNORECASE)
+                    ep_match = ep_regexp.search(ep_node.get_text())
+                    if not ep_match:
+                        continue
+
+                    season = int(ep_match.group(1))
+                    episode = int(ep_match.group(2))
+                    if season != search_season or episode != search_episode:
+                        continue
+
+                    details_node = row_node.find('a', class_='a_details')
+                    if not details_node:
+                        continue
+
+                    details_url = "http://www.lostfilm.tv" + details_node.get('href')
+
+                    entry = Entry()
+                    entry['title'] = "{0} (s{1:02d}e{2:02d})".format(show.titles[-1], season, episode)
+                    # entry['series_season'] = season
+                    # entry['series_episode'] = episode
+                    entry['url'] = details_url
+                    # tds = link.parent.parent.parent.find_all('td')
+                    # entry['torrent_seeds'] = int(tds[-2].contents[0])
+                    # entry['torrent_leeches'] = int(tds[-1].contents[0])
+                    # entry['search_sort'] = torrent_availability(entry['torrent_seeds'], entry['torrent_leeches'])
+                    # Parse content_size
+                    # size = link.find_next(attrs={'class': 'detDesc'}).get_text()
+                    # size = re.search('Size (\d+(\.\d+)?\xa0(?:[PTGMK])iB)', size)
+                    #
+                    # entry['content_size'] = parse_filesize(size.group(1))
+
+                    entries.add(entry)
+
+        return entries
 
 
 @event('plugin.register')
 def register_plugin():
-    plugin.register(LostFilmUrlRewrite, 'lostfilm', groups=['urlrewriter'], api_ver=2)
+    plugin.register(LostFilmUrlRewrite, 'lostfilm', groups=['urlrewriter', 'search'], api_ver=2)
