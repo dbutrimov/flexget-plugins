@@ -4,6 +4,7 @@ from builtins import *  # pylint: disable=unused-import, redefined-builtin
 
 import re
 from bs4 import BeautifulSoup
+import urllib
 
 import logging
 
@@ -17,6 +18,9 @@ log = logging.getLogger('lostfilm')
 download_url_regexp = re.compile(r'^https?://(?:www\.)?lostfilm\.tv/download\.php\?id=(\d+).*$', flags=re.IGNORECASE)
 details_url_regexp = re.compile(r'^https?://(?:www\.)?lostfilm\.tv/details\.php\?id=(\d+).*$', flags=re.IGNORECASE)
 replace_download_url_regexp = re.compile(r'/download\.php', flags=re.IGNORECASE)
+
+host_prefix = 'http://www.lostfilm.tv/'
+host_regexp = re.compile(r'^https?://(?:www\.)?lostfilm\.tv.*$', flags=re.IGNORECASE)
 
 show_all_releases_regexp = re.compile(
     r'ShowAllReleases\(\\?[\'"](.+?)\\?[\'"],\s*\\?[\'"](.+?)\\?[\'"],\s*\\?[\'"](.+?)\\?[\'"]\)',
@@ -52,6 +56,11 @@ class LostFilmUrlRewrite(object):
         },
         'additionalProperties': False
     }
+
+    def add_host_if_need(self, url):
+        if not host_regexp.match(url):
+            url = urllib.parse.urljoin(host_prefix, url)
+        return url
 
     def on_task_start(self, task, config):
         if not isinstance(config, dict):
@@ -160,12 +169,12 @@ class LostFilmUrlRewrite(object):
                 description_text = link_node.get_text()
                 if text_regexp.search(description_text):
                     log.debug("Torrent link was accepted! [ regexp: `{0}`, description: `{1}` ]".format(
-                              text_pattern, description_text))
+                              text_pattern, description_text.encode('ascii', 'replace')))
                     entry['url'] = torrent_link
                     return True
                 else:
                     log.debug("Torrent link was rejected: [ regexp: `{0}`, description: `{1}` ]".format(
-                              text_pattern, description_text))
+                              text_pattern, description_text.encode('ascii', 'replace')))
 
         reject_reason = "Torrent link was not detected with regexp `{0}`".format(text_pattern)
         log.error(reject_reason)
@@ -205,10 +214,12 @@ class LostFilmUrlRewrite(object):
                 continue
 
             titles = [x.strip('()') for x in titles]
-            category_link = "http://www.lostfilm.tv" + link_node.get('href')  # TODO: Add host if needs
+            category_link = link_node.get('href')
+            category_link = self.add_host_if_need(category_link)
 
             # log.debug("Serial `{0}` was added".format(" / ".join(titles)))
-            shows.add(LostFilmShow(titles, category_link))
+            show = LostFilmShow(titles, category_link)
+            shows.add(show)
 
         search_regexp = re.compile('^(.*?)\s*s(\d+?)e(\d+?)$', flags=re.IGNORECASE)
 
@@ -256,7 +267,8 @@ class LostFilmUrlRewrite(object):
                     if not details_node:
                         continue
 
-                    details_url = "http://www.lostfilm.tv" + details_node.get('href')
+                    details_url = details_node.get('href')
+                    details_url = self.add_host_if_need(details_url)
 
                     entry = Entry()
                     entry['title'] = "{0} (s{1:02d}e{2:02d})".format(show.titles[-1], season, episode)
