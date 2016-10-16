@@ -96,7 +96,7 @@ class LostFilmUrlRewrite(object):
             log.error(reject_reason)
             entry.reject(reject_reason)
             return False
-        details_html = details_response.text
+        details_html = details_response.content
 
         log.debug("Parsing details page `{0}`...".format(details_url))
 
@@ -136,9 +136,10 @@ class LostFilmUrlRewrite(object):
             log.error(reject_reason)
             entry.reject(reject_reason)
             return False
-        torrents_html = torrents_response.text
+        torrents_html = torrents_response.content
 
-        replace_location_match = replace_location_regexp.search(torrents_html)
+        torrents_html_text = torrents_html.decode(torrents_response.encoding)
+        replace_location_match = replace_location_regexp.search(torrents_html_text)
         if replace_location_match:
             replace_location_url = replace_location_match.group(1)
 
@@ -151,7 +152,7 @@ class LostFilmUrlRewrite(object):
                 log.error(reject_reason)
                 entry.reject(reject_reason)
                 return False
-            torrents_html = torrents_response.text
+            torrents_html = torrents_response.content
 
         text_pattern = self.config.get('regexp')
         if not isinstance(text_pattern, str):
@@ -169,12 +170,12 @@ class LostFilmUrlRewrite(object):
                 description_text = link_node.get_text()
                 if text_regexp.search(description_text):
                     log.debug("Torrent link was accepted! [ regexp: `{0}`, description: `{1}` ]".format(
-                              text_pattern, description_text.encode('ascii', 'replace')))
+                              text_pattern, description_text))
                     entry['url'] = torrent_link
                     return True
                 else:
                     log.debug("Torrent link was rejected: [ regexp: `{0}`, description: `{1}` ]".format(
-                              text_pattern, description_text.encode('ascii', 'replace')))
+                              text_pattern, description_text))
 
         reject_reason = "Torrent link was not detected with regexp `{0}`".format(text_pattern)
         log.error(reject_reason)
@@ -193,7 +194,7 @@ class LostFilmUrlRewrite(object):
         except requests.RequestException as e:
             log.error("Error while fetching page: {0}".format(e))
             return None
-        serials_html = serials_response.text
+        serials_html = serials_response.content
 
         log.debug("Parsing serials page `{0}`...".format(serials_url))
 
@@ -205,7 +206,6 @@ class LostFilmUrlRewrite(object):
 
         shows = set()
         link_nodes = mid_node.find_all('a', class_='bb_a')
-        log.debug("{0:d} serial node(s) are found".format(len(link_nodes)))
         for link_node in link_nodes:
             link_text = link_node.get_text(separator='\n')
             titles = link_text.splitlines()
@@ -221,28 +221,32 @@ class LostFilmUrlRewrite(object):
             show = LostFilmShow(titles, category_link)
             shows.add(show)
 
+        log.debug("{0:d} show(s) are found".format(len(shows)))
+
         search_regexp = re.compile('^(.*?)\s*s(\d+?)e(\d+?)$', flags=re.IGNORECASE)
 
-        for show in shows:
-            for search_string in entry.get('search_strings', [entry['title']]):
-                search_match = search_regexp.search(search_string)
-                if not search_match:
-                    continue
-                search_title = search_match.group(1)
-                search_season = int(search_match.group(2))
-                search_episode = int(search_match.group(3))
+        for search_string in entry.get('search_strings', [entry['title']]):
+            search_match = search_regexp.search(search_string)
+            if not search_match:
+                continue
+
+            search_title = search_match.group(1)
+            search_season = int(search_match.group(2))
+            search_episode = int(search_match.group(3))
+
+            # log.debug('search_title: {0}; search_season: {1}; search_episode: {2}'.format(
+            #     search_title, search_season, search_episode))
+
+            for show in shows:
                 if search_title not in show.titles:
                     continue
-
-                # log.debug('search_title: {0}; search_season: {1}; search_episode: {2}'.format(
-                #     search_title, search_season, search_episode))
 
                 try:
                     category_response = task.requests.get(show.url)
                 except requests.RequestException as e:
                     log.error("Error while fetching page: {0}".format(e))
                     continue
-                category_html = category_response.text
+                category_html = category_response.content
 
                 category_tree = BeautifulSoup(category_html, 'html.parser')
                 mid_node = category_tree.find('div', class_='mid')
@@ -271,7 +275,7 @@ class LostFilmUrlRewrite(object):
                     details_url = self.add_host_if_need(details_url)
 
                     entry = Entry()
-                    entry['title'] = "{0} (s{1:02d}e{2:02d})".format(show.titles[-1], season, episode)
+                    entry['title'] = "{0} (s{1:02d}e{2:02d})".format(search_title, season, episode)
                     # entry['series_season'] = season
                     # entry['series_episode'] = episode
                     entry['url'] = details_url
