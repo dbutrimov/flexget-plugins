@@ -177,7 +177,7 @@ class NewStudioUrlRewrite(object):
                         torrent_url = self.add_host_if_need(torrent_url)
 
                         entry = Entry()
-                        entry['title'] = "{0} (s{1:02d}e{2:02d})".format(search_title, season, episode)
+                        entry['title'] = "{0} / s{1:02d}e{2:02d}".format(search_title, season, episode)
                         entry['url'] = torrent_url
 
                         entries.add(entry)

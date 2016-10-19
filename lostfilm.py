@@ -275,7 +275,7 @@ class LostFilmUrlRewrite(object):
                     details_url = self.add_host_if_need(details_url)
 
                     entry = Entry()
-                    entry['title'] = "{0} (s{1:02d}e{2:02d})".format(search_title, season, episode)
+                    entry['title'] = "{0} / s{1:02d}e{2:02d}".format(search_title, season, episode)
                     # entry['series_season'] = season
                     # entry['series_episode'] = episode
                     entry['url'] = details_url
