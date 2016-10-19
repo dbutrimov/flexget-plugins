@@ -104,7 +104,10 @@ class NewStudioUrlRewrite(object):
 
         log.debug("{0:d} shows are found".format(len(shows)))
 
-        search_regexp = re.compile('^(.*?)\s*s(\d+?)e(\d+?)$', flags=re.IGNORECASE)
+        viewtopic_link_regexp = re.compile(r'.*/viewtopic\.php\?t=(\d+).*', flags=re.IGNORECASE)
+        pagination_regexp = re.compile(r'pagination.*', flags=re.IGNORECASE)
+        quality_regexp = re.compile(r'^.*\)\s*(.*?)$', flags=re.IGNORECASE)
+        search_regexp = re.compile(r'^(.*?)\s*s(\d+?)e(\d+?)$', flags=re.IGNORECASE)
         for search_string in entry.get('search_strings', [entry['title']]):
             search_match = search_regexp.search(search_string)
             if not search_match:
@@ -138,13 +141,13 @@ class NewStudioUrlRewrite(object):
                     viewforum_tree = BeautifulSoup(viewforum_html, 'html.parser')
 
                     if current_page_index < 1:
-                        pagination_node = viewforum_tree.find('div', class_=re.compile(r'pagination.*', flags=re.IGNORECASE))
+                        pagination_node = viewforum_tree.find('div', class_=pagination_regexp)
                         if pagination_node:
                             pagination_link_nodes = pagination_node.find_all('a')
                             for pagination_link_node in pagination_link_nodes:
                                 page_number_text = pagination_link_node.text
                                 try:
-                                    page_number = int(page_number_text)
+                                    int(page_number_text)
                                 except Exception:
                                     continue
                                 page_link = pagination_link_node.get('href')
@@ -156,7 +159,6 @@ class NewStudioUrlRewrite(object):
                         continue
 
                     row_nodes = accordion_node.find_all('div', class_='row-fluid')
-                    viewtopic_link_regexp = re.compile(r'.*/viewtopic\.php\?t=(\d+).*', flags=re.IGNORECASE)
                     for row_node in row_nodes:
                         link_node = row_node.find('a', class_='torTopic tt-text', href=viewtopic_link_regexp)
                         if not link_node:
@@ -173,11 +175,16 @@ class NewStudioUrlRewrite(object):
                         if season != search_season or episode != search_episode:
                             continue
 
+                        quality = None
+                        quality_match = quality_regexp.search(title)
+                        if quality_match:
+                            quality = quality_match.group(1)
+
                         torrent_url = link_node.get('href')
                         torrent_url = self.add_host_if_need(torrent_url)
 
                         entry = Entry()
-                        entry['title'] = "{0} / s{1:02d}e{2:02d}".format(search_title, season, episode)
+                        entry['title'] = "{0} / s{1:02d}e{2:02d} / {3}".format(search_title, season, episode, quality)
                         entry['url'] = torrent_url
 
                         entries.add(entry)

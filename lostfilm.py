@@ -223,6 +223,8 @@ class LostFilmUrlRewrite(object):
 
         log.debug("{0:d} show(s) are found".format(len(shows)))
 
+        ep_regexp = re.compile("(\d+)\s+[Сс]езон\s+(\d+)\s+[Сс]ерия", flags=re.IGNORECASE)
+        row_regexp = re.compile('t_row.*', flags=re.IGNORECASE)
         search_regexp = re.compile('^(.*?)\s*s(\d+?)e(\d+?)$', flags=re.IGNORECASE)
 
         for search_string in entry.get('search_strings', [entry['title']]):
@@ -251,13 +253,12 @@ class LostFilmUrlRewrite(object):
                 category_tree = BeautifulSoup(category_html, 'html.parser')
                 mid_node = category_tree.find('div', class_='mid')
 
-                row_nodes = mid_node.find_all('div', class_=re.compile('t_row.*', flags=re.IGNORECASE))
+                row_nodes = mid_node.find_all('div', class_=row_regexp)
                 for row_node in row_nodes:
                     ep_node = row_node.find('span', class_='micro')
                     if not ep_node:
                         continue
 
-                    ep_regexp = re.compile("(\d+)\s+сезон\s+(\d+)\s+серия", flags=re.IGNORECASE)
                     ep_match = ep_regexp.search(ep_node.get_text())
                     if not ep_match:
                         continue
