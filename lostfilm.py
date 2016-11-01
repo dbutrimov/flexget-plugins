@@ -223,9 +223,9 @@ class LostFilmUrlRewrite(object):
 
         log.debug("{0:d} show(s) are found".format(len(shows)))
 
-        ep_regexp = re.compile("(\d+)\s+[Сс]езон\s+(\d+)\s+[Сс]ерия", flags=re.IGNORECASE)
-        row_regexp = re.compile('t_row.*', flags=re.IGNORECASE)
-        search_regexp = re.compile('^(.*?)\s*s(\d+?)e(\d+?)$', flags=re.IGNORECASE)
+        ep_regexp = re.compile(r"(\d+)\s+[Сс]езон\s+(\d+)\s+[Сс]ерия", flags=re.IGNORECASE)
+        row_regexp = re.compile(r't_row.*', flags=re.IGNORECASE)
+        search_regexp = re.compile(r'^(.*?)\s*s(\d+?)e(\d+?)$', flags=re.IGNORECASE)
 
         for search_string in entry.get('search_strings', [entry['title']]):
             search_match = search_regexp.search(search_string)
