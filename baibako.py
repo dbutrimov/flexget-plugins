@@ -17,15 +17,16 @@ class BaibakoShow(object):
         self.url = url
 
 
-headers = {'cookie': 'PHPSESSID=brq4r5svhlp3h53bkcbgkjda72; uid=91346; pass=177eedfa3b4e41e2595730e6d0a0f39f'}
+headers = {'cookie': 'PHPSESSID=updjhuc3mlac37ejge5it5kk51; uid=91346; pass=065333565042aca10d1e0aeccc477e20'}
 
 try:
     serials_response = requests.get('http://baibako.tv/serials.php', headers=headers)
 except requests.RequestException as e:
     print(e)
-serials_html = serials_response.content
+serials_html = serials_response.text
 
 table_class_regexp = re.compile(r'table.*', flags=re.IGNORECASE)
+episode_title_regexp = re.compile(r'^([^/]*?)\s*/([^/]*?)\s*/\s*s(\d+)e(\d+)\s*/\s*([^/]*?)\s*/.*$', flags=re.IGNORECASE)
 
 shows = set()
 
@@ -34,24 +35,29 @@ table_node = serials_tree.find('table', class_=table_class_regexp)
 if table_node:
     link_nodes = table_node.find_all('a')
     for link_node in link_nodes:
-        title = link_node.get_text()
+        title = link_node.text
         href = 'http://baibako.tv/' + link_node.get('href')
         # print("{0} - {1}".format(title.encode('windows-1251', 'replace'), href))
 
         show = BaibakoShow([title], href)
         shows.add(show)
 
+print("{0} show(s) found!".format(len(shows)))
+
 serial_tab = 'hd720'
-search_title = "11.22.63"
+search_title = "Скорпион"  # "11.22.63"
+print(search_title)
 for show in shows:
     if search_title not in show.titles:
         continue
 
+    serial_url = show.url + '&tab=' + serial_tab
+    print(serial_url)
     try:
-        serial_response = requests.get(show.url + '&tab=' + serial_tab, headers=headers)
+        serial_response = requests.get(serial_url, headers=headers)
     except requests.RequestException as e:
         print(e)
-    serial_html = serial_response.content
+    serial_html = serial_response.text
 
     serial_tree = BeautifulSoup(serial_html, 'html.parser')
     table_node = serial_tree.find('table', class_=table_class_regexp)
@@ -60,5 +66,24 @@ for show in shows:
         link_nodes = table_node.find_all('a', href=href_regexp)
         for link_node in link_nodes:
             href = 'http://baibako.tv/' + link_node.get('href')
-            title = link_node.get_text()
-            print("{0} - {1}".format(title.encode('windows-1251', 'replace'), href))
+
+            href_match = href_regexp.search(href)
+            topic_id = href_match.group(1)
+            print("topic_id: {0}".format(topic_id))
+
+            download_url = "http://baibako.tv/download.php?id={0}".format(topic_id)
+            print(download_url)
+
+            episode_title = link_node.text
+
+            episode_match = episode_title_regexp.match(episode_title)
+            if episode_match:
+                ru_title = episode_match.group(1)
+                title = episode_match.group(2)
+                season = int(episode_match.group(3))
+                episode = int(episode_match.group(4))
+                quality = episode_match.group(5)
+
+                print("{0} / {1} / s{2:02d}e{3:02d} / {4} - {5}".format(title, ru_title, season, episode, quality, href))
+    else:
+        print("table node not found")
