@@ -22,8 +22,9 @@ details_url_regexp = re.compile(r'^https?://(?:www\.)?baibako\.tv/details\.php\?
 
 table_class_regexp = re.compile(r'table.*', flags=re.IGNORECASE)
 
-episode_title_regexp = re.compile(r'^([^/]*?)\s*/\s*([^/]*?)\s*/\s*s(\d+)e(\d+)\s*/\s*([^/]*?)\s*(?:(?:/.*)|$)',
-                                  flags=re.IGNORECASE)
+episode_title_regexp = re.compile(
+    r'^([^/]*?)\s*/\s*([^/]*?)\s*/\s*s(\d+)e(\d+)(?:-(\d+))?\s*/\s*([^/]*?)\s*(?:(?:/.*)|$)',
+    flags=re.IGNORECASE)
 
 
 class BaibakoShow(object):
@@ -160,22 +161,39 @@ class BaibakoUrlRewrite(object):
                         continue
 
                     season = int(episode_title_match.group(3))
-                    episode = int(episode_title_match.group(4))
+                    first_episode = int(episode_title_match.group(4))
+                    last_episode = first_episode
+                    last_episode_group = episode_title_match.group(5)
+                    if last_episode_group:
+                        last_episode = int(last_episode_group)
 
-                    if season != search_season or episode != search_episode:
+                    if season != search_season or (first_episode > search_episode or last_episode < search_episode):
                         continue
 
                     ru_title = episode_title_match.group(1)
                     title = episode_title_match.group(2)
-                    quality = episode_title_match.group(5)
+                    quality = episode_title_match.group(6)
 
-                    entry_title = "{0} / {1} / s{2:02d}e{3:02d} / {4}".format(title, ru_title, season, episode, quality)
+                    if last_episode > first_episode:
+                        episode_number = 's{0:02d}e{1:02d}-{2:02d}'.format(season, first_episode, last_episode)
+                    else:
+                        episode_number = 's{0:02d}e{1:02d}'.format(season, first_episode)
+
+                    entry_title = "{0} / {1} / {2} / {3}".format(title, ru_title, episode_number, quality)
                     entry_url = link_node.get('href')
                     entry_url = self.add_host_if_need(entry_url)
 
                     entry = Entry()
                     entry['title'] = entry_title
                     entry['url'] = entry_url
+                    # entry['series_name'] = [title, ru_title]
+                    # entry['series_season'] = season
+                    # if last_episode > first_episode:
+                    #     entry['series_episode'] = '{0}-{1}'.format(first_episode, last_episode)
+                    # else:
+                    #     entry['series_episode'] = first_episode
+                    # entry['series_id'] = episode_number
+                    # entry['proper'] = 'repack'
 
                     entries.add(entry)
 
