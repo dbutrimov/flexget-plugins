@@ -75,9 +75,9 @@ class BaibakoUrlRewrite(object):
         url = entry['url']
         url_match = details_url_regexp.search(url)
         if not url_match:
-            reject_reason = 'Url don''t matched'
-            log.error(reject_reason)
-            entry.reject(reject_reason)
+            reject_reason = "Url don't matched: {0}".format(url)
+            log.verbose(reject_reason)
+            # entry.reject(reject_reason)
             return False
 
         topic_id = url_match.group(1)
@@ -122,11 +122,11 @@ class BaibakoUrlRewrite(object):
         if not isinstance(serial_tab, str):
             serial_tab = 'all'
 
-        search_regexp = re.compile(r'^(.*?)\s*s(\d+?)e(\d+?)$', flags=re.IGNORECASE)
+        search_string_regexp = re.compile(r'^(.*?)\s*s(\d+)e(\d+)$', flags=re.IGNORECASE)
         episode_link_regexp = re.compile(r'details.php\?id=(\d+)', flags=re.IGNORECASE)
 
         for search_string in entry.get('search_strings', [entry['title']]):
-            search_match = search_regexp.search(search_string)
+            search_match = search_string_regexp.search(search_string)
             if not search_match:
                 continue
 
@@ -186,14 +186,6 @@ class BaibakoUrlRewrite(object):
                     entry = Entry()
                     entry['title'] = entry_title
                     entry['url'] = entry_url
-                    # entry['series_name'] = [title, ru_title]
-                    # entry['series_season'] = season
-                    # if last_episode > first_episode:
-                    #     entry['series_episode'] = '{0}-{1}'.format(first_episode, last_episode)
-                    # else:
-                    #     entry['series_episode'] = first_episode
-                    # entry['series_id'] = episode_id
-                    # entry['proper'] = 'repack'
 
                     entries.add(entry)
 
