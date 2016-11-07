@@ -175,11 +175,11 @@ class BaibakoUrlRewrite(object):
                     quality = episode_title_match.group(6)
 
                     if last_episode > first_episode:
-                        episode_number = 's{0:02d}e{1:02d}-{2:02d}'.format(season, first_episode, last_episode)
+                        episode_id = 's{0:02d}e{1:02d}-e{2:02d}'.format(season, first_episode, last_episode)
                     else:
-                        episode_number = 's{0:02d}e{1:02d}'.format(season, first_episode)
+                        episode_id = 's{0:02d}e{1:02d}'.format(season, first_episode)
 
-                    entry_title = "{0} / {1} / {2} / {3}".format(title, ru_title, episode_number, quality)
+                    entry_title = "{0} / {1} / {2} / {3}".format(title, ru_title, episode_id, quality)
                     entry_url = link_node.get('href')
                     entry_url = self.add_host_if_need(entry_url)
 
@@ -192,7 +192,7 @@ class BaibakoUrlRewrite(object):
                     #     entry['series_episode'] = '{0}-{1}'.format(first_episode, last_episode)
                     # else:
                     #     entry['series_episode'] = first_episode
-                    # entry['series_id'] = episode_number
+                    # entry['series_id'] = episode_id
                     # entry['proper'] = 'repack'
 
                     entries.add(entry)
