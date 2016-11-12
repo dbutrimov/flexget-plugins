@@ -3,15 +3,29 @@ from __future__ import unicode_literals, division, absolute_import
 from builtins import *  # pylint: disable=unused-import, redefined-builtin
 
 import re
-from bs4 import BeautifulSoup
+import json
 import urllib
-
 import logging
+from time import sleep
+from datetime import datetime, timedelta
+from bs4 import BeautifulSoup
+
+from sqlalchemy import Column, Unicode, Integer, DateTime
+from sqlalchemy.types import TypeDecorator, VARCHAR
+
+from requests.auth import AuthBase
+# from requests.utils import dict_from_cookiejar
 
 from flexget import plugin
 from flexget.entry import Entry
 from flexget.event import event
 from flexget.utils import requests
+from flexget.manager import Session
+from flexget.db_schema import versioned_base
+from flexget.plugin import PluginError
+
+
+Base = versioned_base('baibako_auth', 0)
 
 log = logging.getLogger('baibako')
 
@@ -27,6 +41,77 @@ episode_title_regexp = re.compile(
     flags=re.IGNORECASE)
 
 
+class JSONEncodedDict(TypeDecorator):
+    """Represents an immutable structure as a json-encoded string.
+
+    Usage:
+
+        JSONEncodedDict(255)
+
+    """
+
+    impl = VARCHAR
+
+    def process_bind_param(self, value, dialect):
+        if value is not None:
+            value = json.dumps(value)
+
+        return value
+
+    def process_result_value(self, value, dialect):
+        if value is not None:
+            value = json.loads(value)
+        return value
+
+
+class BaibakoAccount(Base):
+    __tablename__ = 'baibako_accounts'
+    id = Column(Integer, primary_key=True, autoincrement=True, nullable=False)
+    username = Column(Unicode, index=True, nullable=False, unique=True)
+    cookies = Column(JSONEncodedDict)
+    expiry_time = Column(DateTime, nullable=False)
+
+
+class BaibakoAuth(AuthBase):
+    """Supports downloading of torrents from 'baibako' tracker
+           if you pass cookies (CookieJar) to constructor then authentication will be bypassed and cookies will be just set
+        """
+
+    def try_authenticate(self, payload):
+        for _ in range(5):
+            session = requests.Session()
+            session.post('http://baibako.tv/takelogin.php', data=payload)
+            baibako_cookies = session.cookies.get_dict(domain='baibako.tv')
+            if baibako_cookies and len(baibako_cookies) > 0 and 'uid' in baibako_cookies:
+                return baibako_cookies
+            else:
+                sleep(3)
+        raise PluginError('Unable to obtain cookies from Baibako. Looks like invalid username or password.')
+
+    def __init__(self, username, password, cookies=None, db_session=None):
+        if cookies is None:
+            log.debug('Baibako cookie not found. Requesting new one.')
+            payload_ = {'username': username, 'password': password}
+            self.cookies_ = self.try_authenticate(payload_)
+            if db_session:
+                db_session.add(
+                    BaibakoAccount(
+                        username=username,
+                        cookies=self.cookies_,
+                        expiry_time=datetime.now() + timedelta(days=1)))
+                db_session.commit()
+            # else:
+            #     raise ValueError(
+            #         'db_session can not be None if cookies is None')
+        else:
+            log.debug('Using previously saved cookie.')
+            self.cookies_ = cookies
+
+    def __call__(self, r):
+        r.prepare_cookies(self.cookies_)
+        return r
+
+
 class BaibakoShow(object):
     titles = []
     url = ''
@@ -38,34 +123,61 @@ class BaibakoShow(object):
 
 class BaibakoUrlRewrite(object):
     """
-        BaibaKo urlrewriter.
+    BaibaKo urlrewriter.
 
-        Example::
+    Example::
 
-          baibako:
-            serial_tab: 'hd720'
-        """
-
-    config = {}
+      baibako:
+        username: 'username_here'
+        password: 'password_here'
+        serial_tab: 'hd720'
+    """
 
     schema = {
         'type': 'object',
         'properties': {
+            'username': {'type': 'string'},
+            'password': {'type': 'string'},
             'serial_tab': {'type': 'string'}
         },
         'additionalProperties': False
     }
 
+    auth_cache = {}
+
+    def try_find_cookie(self, db_session, username):
+        account = db_session.query(BaibakoAccount).filter(BaibakoAccount.username == username).first()
+        if account:
+            if account.expiry_time < datetime.now():
+                db_session.delete(account)
+                db_session.commit()
+                return None
+            return account.cookies
+        else:
+            return None
+
+    def get_auth_handler(self, config):
+        username = config.get('username')
+        if not username or len(username) <= 0:
+            raise PluginError('Username are not configured.')
+        password = config.get('password')
+        if not password or len(password) <= 0:
+            raise PluginError('Password are not configured.')
+
+        db_session = Session()
+        cookies = self.try_find_cookie(db_session, username)
+        if username not in self.auth_cache:
+            auth_handler = BaibakoAuth(username, password, cookies, db_session)
+            self.auth_cache[username] = auth_handler
+        else:
+            auth_handler = self.auth_cache[username]
+
+        return auth_handler
+
     def add_host_if_need(self, url):
         if not host_regexp.match(url):
             url = urllib.parse.urljoin(host_prefix, url)
         return url
-
-    def on_task_start(self, task, config):
-        if not isinstance(config, dict):
-            log.verbose("Config was not determined - use default.")
-        else:
-            self.config = config
 
     def url_rewritable(self, task, entry):
         url = entry['url']
@@ -85,7 +197,16 @@ class BaibakoUrlRewrite(object):
         entry['url'] = url
         return True
 
+    @plugin.priority(127)
+    def on_task_urlrewrite(self, task, config):
+        auth_handler = self.get_auth_handler(config)
+        for entry in task.accepted:
+            entry['download_auth'] = auth_handler
+
     def search(self, task, entry, config=None):
+
+        auth_handler = self.get_auth_handler(config)
+
         entries = set()
 
         serials_url = 'http://baibako.tv/serials.php'
@@ -93,7 +214,7 @@ class BaibakoUrlRewrite(object):
         log.debug("Fetching serials page `{0}`...".format(serials_url))
 
         try:
-            serials_response = task.requests.get(serials_url)
+            serials_response = requests.get(serials_url, auth=auth_handler)
         except requests.RequestException as e:
             log.error("Error while fetching page: {0}".format(e))
             return None
@@ -118,9 +239,7 @@ class BaibakoUrlRewrite(object):
 
         log.debug("{0:d} show(s) are found".format(len(shows)))
 
-        serial_tab = self.config.get('serial_tab')
-        if not isinstance(serial_tab, str):
-            serial_tab = 'all'
+        serial_tab = config.get('serial_tab', 'all')
 
         search_string_regexp = re.compile(r'^(.*?)\s*s(\d+)e(\d+)$', flags=re.IGNORECASE)
         episode_link_regexp = re.compile(r'details.php\?id=(\d+)', flags=re.IGNORECASE)
@@ -140,7 +259,7 @@ class BaibakoUrlRewrite(object):
 
                 serial_url = show.url + '&tab=' + serial_tab
                 try:
-                    serial_response = task.requests.get(serial_url)
+                    serial_response = requests.get(serial_url, auth=auth_handler)
                 except requests.RequestException as e:
                     log.error("Error while fetching page: {0}".format(e))
                     continue
