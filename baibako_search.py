@@ -5,7 +5,6 @@ from builtins import *  # pylint: disable=unused-import, redefined-builtin
 import os
 import importlib.util
 import re
-import urllib
 import logging
 from bs4 import BeautifulSoup
 
