@@ -136,7 +136,7 @@ class LostFilmAuth(AuthBase):
         return r
 
 
-class LostFilmUrlrewrite(object):
+class PluginLostFilmAuth(object):
     """Usage:
 
     lostfilm_auth:
@@ -185,14 +185,11 @@ class LostFilmUrlrewrite(object):
         return auth_handler
 
     @plugin.priority(127)
-    def on_task_urlrewrite(self, task, config):
+    def on_task_start(self, task, config):
         auth_handler = self.get_auth_handler(config)
-        for entry in task.accepted:
-            url = entry['url']
-            if url_regexp.match(url):
-                entry['download_auth'] = auth_handler
+        task.requests.auth = auth_handler
 
 
 @event('plugin.register')
 def register_plugin():
-    plugin.register(LostFilmUrlrewrite, 'lostfilm_auth', api_ver=2)
+    plugin.register(PluginLostFilmAuth, 'lostfilm_auth', api_ver=2)
