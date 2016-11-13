@@ -19,6 +19,7 @@ from requests.auth import AuthBase
 from flexget import plugin
 from flexget.event import event
 from flexget.utils import requests
+from flexget.manager import Session
 from flexget.db_schema import versioned_base
 from flexget.plugin import PluginError
 
@@ -171,7 +172,7 @@ class LostFilmUrlrewrite(object):
         if not password or len(password) <= 0:
             raise PluginError('Password are not configured.')
 
-        db_session = requests.Session()
+        db_session = Session()
         cookies = self.try_find_cookie(db_session, username)
         if username not in self.auth_cache:
             auth_handler = LostFilmAuth(username, password, cookies, db_session)
