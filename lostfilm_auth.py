@@ -4,7 +4,7 @@ from builtins import *  # pylint: disable=unused-import, redefined-builtin
 
 import json
 import logging
-# import  re
+import re
 from time import sleep
 from datetime import datetime, timedelta
 
@@ -26,6 +26,8 @@ from flexget.plugin import PluginError
 
 Base = versioned_base('lostfilm_auth', 0)
 log = logging.getLogger('lostfilm_auth')
+
+url_regexp = re.compile(r'^https?://(?:www\.)?lostfilm\.tv.*$', flags=re.IGNORECASE)
 
 
 class JSONEncodedDict(TypeDecorator):
@@ -186,7 +188,9 @@ class LostFilmUrlrewrite(object):
     def on_task_urlrewrite(self, task, config):
         auth_handler = self.get_auth_handler(config)
         for entry in task.accepted:
-            entry['download_auth'] = auth_handler
+            url = entry['url']
+            if url_regexp.match(url):
+                entry['download_auth'] = auth_handler
 
 
 @event('plugin.register')
