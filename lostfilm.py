@@ -3,6 +3,7 @@ from __future__ import unicode_literals, division, absolute_import
 from builtins import *  # pylint: disable=unused-import, redefined-builtin
 
 import re
+from time import sleep
 from bs4 import BeautifulSoup
 
 import logging
@@ -77,8 +78,10 @@ class LostFilmUrlRewrite(object):
             reject_reason = "Error while fetching page: {0}".format(e)
             log.error(reject_reason)
             entry.reject(reject_reason)
+            sleep(3)
             return False
         details_html = details_response.content
+        sleep(3)
 
         log.debug("Parsing details page `{0}`...".format(details_url))
 
@@ -117,8 +120,10 @@ class LostFilmUrlRewrite(object):
             reject_reason = "Error while fetching page: {0}".format(e)
             log.error(reject_reason)
             entry.reject(reject_reason)
+            sleep(3)
             return False
         torrents_html = torrents_response.content
+        sleep(3)
 
         torrents_html_text = torrents_html.decode(torrents_response.encoding)
         replace_location_match = replace_location_regexp.search(torrents_html_text)
@@ -133,8 +138,10 @@ class LostFilmUrlRewrite(object):
                 reject_reason = "Error while fetching page: {0}".format(e)
                 log.error(reject_reason)
                 entry.reject(reject_reason)
+                sleep(3)
                 return False
             torrents_html = torrents_response.content
+            sleep(3)
 
         text_pattern = self.config_.get('regexp', '.*')
         text_regexp = re.compile(text_pattern, flags=re.IGNORECASE)

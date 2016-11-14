@@ -5,6 +5,7 @@ from builtins import *  # pylint: disable=unused-import, redefined-builtin
 import os
 import importlib.util
 import re
+from time import sleep
 from bs4 import BeautifulSoup
 
 import logging
@@ -43,8 +44,10 @@ class NewStudioUrlRewrite(object):
             reject_reason = "Error while fetching page: {0}".format(e)
             log.error(reject_reason)
             entry.reject(reject_reason)
+            sleep(3)
             return False
         viewtopic_html = viewtopic_response.content
+        sleep(3)
 
         viewtopic_soup = BeautifulSoup(viewtopic_html, 'html.parser')
         download_node = viewtopic_soup.find('a', href=download_url_regexp)

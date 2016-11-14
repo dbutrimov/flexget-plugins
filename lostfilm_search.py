@@ -6,6 +6,7 @@ import os
 import importlib.util
 import logging
 import re
+from time import sleep
 from bs4 import BeautifulSoup
 
 from flexget import plugin
@@ -47,8 +48,10 @@ class LostFilmSearch(object):
             serials_response = task.requests.get(serials_url)
         except requests.RequestException as e:
             log.error("Error while fetching page: {0}".format(e))
+            sleep(3)
             return None
         serials_html = serials_response.content
+        sleep(3)
 
         log.debug("Parsing serials page `{0}`...".format(serials_url))
 
@@ -101,8 +104,10 @@ class LostFilmSearch(object):
                     category_response = task.requests.get(show.url)
                 except requests.RequestException as e:
                     log.error("Error while fetching page: {0}".format(e))
+                    sleep(3)
                     continue
                 category_html = category_response.content
+                sleep(3)
 
                 category_tree = BeautifulSoup(category_html, 'html.parser')
                 mid_node = category_tree.find('div', class_='mid')

@@ -5,6 +5,7 @@ from builtins import *  # pylint: disable=unused-import, redefined-builtin
 import os
 import importlib.util
 import re
+from time import sleep
 from bs4 import BeautifulSoup
 
 import logging
@@ -50,8 +51,10 @@ class NewStudioSearch(object):
             serials_response = task.requests.get(serials_url)
         except requests.RequestException as e:
             log.error("Error while fetching page: {0}".format(e))
+            sleep(3)
             return None
         serials_html = serials_response.content
+        sleep(3)
 
         log.debug("Parsing serials page `{0}`...".format(serials_url))
 
@@ -106,8 +109,10 @@ class NewStudioSearch(object):
                         viewforum_response = task.requests.get(page_url)
                     except requests.RequestException as e:
                         log.error("Error while fetching page: {0}".format(e))
+                        sleep(3)
                         continue
                     viewforum_html = viewforum_response.content
+                    sleep(3)
 
                     viewforum_tree = BeautifulSoup(viewforum_html, 'html.parser')
 

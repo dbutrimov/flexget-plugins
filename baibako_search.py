@@ -6,6 +6,7 @@ import os
 import importlib.util
 import re
 import logging
+from time import sleep
 from bs4 import BeautifulSoup
 
 from flexget import plugin
@@ -65,8 +66,10 @@ class BaibakoSearch(object):
             serials_response = task.requests.get(serials_url)
         except requests.RequestException as e:
             log.error("Error while fetching page: {0}".format(e))
+            sleep(3)
             return None
         serials_html = serials_response.text
+        sleep(3)
 
         shows = set()
 
@@ -110,8 +113,10 @@ class BaibakoSearch(object):
                     serial_response = task.requests.get(serial_url)
                 except requests.RequestException as e:
                     log.error("Error while fetching page: {0}".format(e))
+                    sleep(3)
                     continue
                 serial_html = serial_response.text
+                sleep(3)
 
                 serial_tree = BeautifulSoup(serial_html, 'html.parser')
                 serial_table_node = serial_tree.find('table', class_=table_class_regexp)
