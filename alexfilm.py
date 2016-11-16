@@ -24,7 +24,7 @@ host_prefix = 'http://alexfilm.cc/'
 host_regexp = re.compile(r'^https?://(?:www\.)?alexfilm\.cc.*$', flags=re.IGNORECASE)
 
 
-class BaibakoUrlRewrite(object):
+class AlexFilmUrlRewrite(object):
     """AlexFilm urlrewriter."""
 
     def add_host_if_need(self, url):
@@ -67,4 +67,4 @@ class BaibakoUrlRewrite(object):
 
 @event('plugin.register')
 def register_plugin():
-    plugin.register(BaibakoUrlRewrite, plugin_name, groups=['urlrewriter'], api_ver=2)
+    plugin.register(AlexFilmUrlRewrite, plugin_name, groups=['urlrewriter'], api_ver=2)

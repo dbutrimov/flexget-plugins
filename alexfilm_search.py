@@ -107,7 +107,8 @@ class AlexFilmSearch(object):
 
                 url_regexp = re.compile(r'viewtopic\.php\?t=(\d+)', flags=re.IGNORECASE)
 
-                panel_nodes = serial_table_node.find_all('div', class_='panel panel-default')
+                panel_class_regexp = re.compile(r'panel.*', flags=re.IGNORECASE)
+                panel_nodes = serial_table_node.find_all('div', class_=panel_class_regexp)
                 for panel_node in panel_nodes:
                     url_node = panel_node.find('a', href=url_regexp)
                     if not url_node:
@@ -128,7 +129,7 @@ class AlexFilmSearch(object):
                     if search_season != season or (search_episode < first_episode or search_episode > last_episode):
                         continue
 
-                    name = "{0} / {1} / s{2:02d}e{3:02d}-e{4:02d} / {5}".format(
+                    name = "{0} / {1} / s{2:02d}e{3:02d}-{4:02d} / {5}".format(
                         title, alternative_title, season, first_episode, last_episode, quality)
                     topic_url = 'http://alexfilm.cc/' + url_node.get('href')
 
