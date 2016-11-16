@@ -147,7 +147,7 @@ class BaibakoSearch(object):
                     quality = episode_title_match.group(6)
 
                     if last_episode > first_episode:
-                        episode_id = 's{0:02d}e{1:02d}-e{2:02d}'.format(season, first_episode, last_episode)
+                        episode_id = 's{0:02d}e{1:02d}-{2:02d}'.format(season, first_episode, last_episode)
                     else:
                         episode_id = 's{0:02d}e{1:02d}'.format(season, first_episode)
 
