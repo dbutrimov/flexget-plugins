@@ -23,31 +23,18 @@ from sqlalchemy.types import TypeDecorator, VARCHAR
 
 plugin_name = 'lostfilm'
 
-Base = versioned_base(plugin_name, 0)
 log = logging.getLogger(plugin_name)
-
-download_url_regexp = re.compile(r'^https?://(?:www\.)?lostfilm\.tv/download\.php\?id=(\d+).*$', flags=re.IGNORECASE)
-details_url_regexp = re.compile(r'^https?://(?:www\.)?lostfilm\.tv/details\.php\?id=(\d+).*$', flags=re.IGNORECASE)
-replace_download_url_regexp = re.compile(r'/download\.php', flags=re.IGNORECASE)
-
-show_all_releases_regexp = re.compile(
-    r'ShowAllReleases\(\\?[\'"](.+?)\\?[\'"],\s*\\?[\'"](.+?)\\?[\'"],\s*\\?[\'"](.+?)\\?[\'"]\)',
-    flags=re.IGNORECASE)
-replace_location_regexp = re.compile(r'location\.replace\("(.+?)"\);', flags=re.IGNORECASE)
-
-url_scheme = 'http'
-url_host = 'www.lostfilm.tv'
+Base = versioned_base(plugin_name, 0)
 
 
-def process_url(url, default_scheme, default_host):
-    split_result = urlsplit(url)
-    fragments = list(split_result)
+def process_url(url, base_url):
+    base_fragments = list(urlsplit(base_url))
+    fragments = list(urlsplit(url))
     if len(fragments[0]) <= 0:
-        fragments[0] = default_scheme
+        fragments[0] = base_fragments[0]
     if len(fragments[1]) <= 0:
-        fragments[1] = default_host
-    url = urlunsplit(fragments)
-    return url
+        fragments[1] = base_fragments[1]
+    return urlunsplit(fragments)
 
 
 # region LostFilmAuthPlugin
@@ -213,6 +200,16 @@ class LostFilmAuthPlugin(object):
 
 
 # region LostFilmPlugin
+download_url_regexp = re.compile(r'^https?://(?:www\.)?lostfilm\.tv/download\.php\?id=(\d+).*$', flags=re.IGNORECASE)
+details_url_regexp = re.compile(r'^https?://(?:www\.)?lostfilm\.tv/details\.php\?id=(\d+).*$', flags=re.IGNORECASE)
+replace_download_url_regexp = re.compile(r'/download\.php', flags=re.IGNORECASE)
+
+show_all_releases_regexp = re.compile(
+    r'ShowAllReleases\(\\?[\'"](.+?)\\?[\'"],\s*\\?[\'"](.+?)\\?[\'"],\s*\\?[\'"](.+?)\\?[\'"]\)',
+    flags=re.IGNORECASE)
+replace_location_regexp = re.compile(r'location\.replace\("(.+?)"\);', flags=re.IGNORECASE)
+
+
 class DbLostFilmShow(Base):
     __tablename__ = 'lostfilm_shows'
     id = Column(Integer, primary_key=True, nullable=False)
@@ -251,7 +248,7 @@ class LostFilmParser(object):
         link_nodes = mid_node.find_all('a', class_='bb_a')
         for link_node in link_nodes:
             category_link = link_node.get('href')
-            category_link = process_url(category_link, default_scheme=url_scheme, default_host=url_host)
+            # category_link = process_url(category_link, default_scheme=url_scheme, default_host=url_host)
 
             url_match = url_regexp.search(category_link)
             if not url_match:
@@ -522,6 +519,10 @@ class LostFilmPlugin(object):
         log.debug("Parsing serials page `{0}`...".format(serials_url))
 
         shows = LostFilmParser.parse_shows_page(serials_html)
+        if shows:
+            for show in shows:
+                show.url = process_url(show.url, serials_response.url)
+
         return shows
 
     def search_show(self, task, title, db_session):
@@ -596,7 +597,7 @@ class LostFilmPlugin(object):
                     continue
 
                 details_url = details_node.get('href')
-                details_url = process_url(details_url, default_scheme=url_scheme, default_host=url_host)
+                details_url = process_url(details_url, category_response.url)
 
                 entry = Entry()
                 entry['title'] = "{0} / s{1:02d}e{2:02d}".format(search_title, season, episode)

@@ -26,21 +26,15 @@ plugin_name = 'baibako'
 log = logging.getLogger(plugin_name)
 Base = versioned_base(plugin_name, 0)
 
-details_url_regexp = re.compile(r'^https?://(?:www\.)?baibako\.tv/details\.php\?id=(\d+).*$', flags=re.IGNORECASE)
 
-url_scheme = 'http'
-url_host = 'baibako.tv'
-
-
-def process_url(url, default_scheme, default_host):
-    split_result = urlsplit(url)
-    fragments = list(split_result)
+def process_url(url, base_url):
+    base_fragments = list(urlsplit(base_url))
+    fragments = list(urlsplit(url))
     if len(fragments[0]) <= 0:
-        fragments[0] = default_scheme
+        fragments[0] = base_fragments[0]
     if len(fragments[1]) <= 0:
-        fragments[1] = default_host
-    url = urlunsplit(fragments)
-    return url
+        fragments[1] = base_fragments[1]
+    return urlunsplit(fragments)
 
 
 # region BaibakoAuthPlugin
@@ -170,6 +164,8 @@ class BaibakoAuthPlugin(object):
 
 
 # region BaibakoPlugin
+details_url_regexp = re.compile(r'^https?://(?:www\.)?baibako\.tv/details\.php\?id=(\d+).*$', flags=re.IGNORECASE)
+
 table_class_regexp = re.compile(r'table.*', flags=re.IGNORECASE)
 episode_title_regexp = re.compile(
     r'^([^/]*?)\s*/\s*([^/]*?)\s*/\s*s(\d+)e(\d+)(?:-(\d+))?\s*/\s*([^/]*?)\s*(?:(?:/.*)|$)',
@@ -214,7 +210,7 @@ class BaibakoParser(object):
         link_nodes = serials_node.find_all('a')
         for link_node in link_nodes:
             serial_link = link_node.get('href')
-            serial_link = process_url(serial_link, default_scheme=url_scheme, default_host=url_host)
+            # serial_link = process_url(serial_link, default_scheme=url_scheme, default_host=url_host)
 
             url_match = url_regexp.search(serial_link)
             if not url_match:
@@ -370,6 +366,10 @@ class BaibakoPlugin(object):
         log.debug("Parsing serials page `{0}`...".format(serials_url))
 
         shows = BaibakoParser.parse_shows_page(serials_html)
+        if shows:
+            for show in shows:
+                show.url = process_url(show.url, serials_response.url)
+
         return shows
 
     def search_show(self, task, title, db_session):
@@ -458,7 +458,7 @@ class BaibakoPlugin(object):
 
                 entry_title = "{0} / {1} / {2} / {3}".format(title, ru_title, episode_id, quality)
                 entry_url = link_node.get('href')
-                entry_url = process_url(entry_url, default_scheme=url_scheme, default_host=url_host)
+                entry_url = process_url(entry_url, serial_response.url)
 
                 entry = Entry()
                 entry['title'] = entry_title

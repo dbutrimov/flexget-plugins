@@ -23,25 +23,18 @@ from sqlalchemy.types import TypeDecorator, VARCHAR
 
 plugin_name = 'alexfilm'
 
-Base = versioned_base(plugin_name, 0)
 log = logging.getLogger(plugin_name)
-
-topic_url_regexp = re.compile(r'^https?://(?:www\.)?alexfilm\.cc/viewtopic\.php\?t=(\d+).*$', flags=re.IGNORECASE)
-download_url_regexp = re.compile(r'dl\.php\?id=(\d+)', flags=re.IGNORECASE)
-
-url_scheme = 'http'
-url_host = 'alexfilm.cc'
+Base = versioned_base(plugin_name, 0)
 
 
-def process_url(url, default_scheme, default_host):
-    split_result = urlsplit(url)
-    fragments = list(split_result)
+def process_url(url, base_url):
+    base_fragments = list(urlsplit(base_url))
+    fragments = list(urlsplit(url))
     if len(fragments[0]) <= 0:
-        fragments[0] = default_scheme
+        fragments[0] = base_fragments[0]
     if len(fragments[1]) <= 0:
-        fragments[1] = default_host
-    url = urlunsplit(fragments)
-    return url
+        fragments[1] = base_fragments[1]
+    return urlunsplit(fragments)
 
 
 # region AlexFilmAuthPlugin
@@ -178,6 +171,10 @@ class AlexFilmAuthPlugin(object):
 
 
 # region AlexFilmPlugin
+topic_url_regexp = re.compile(r'^https?://(?:www\.)?alexfilm\.cc/viewtopic\.php\?t=(\d+).*$', flags=re.IGNORECASE)
+download_url_regexp = re.compile(r'dl\.php\?id=(\d+)', flags=re.IGNORECASE)
+
+
 class DbAlexFilmShow(Base):
     __tablename__ = 'alexfilm_shows'
     id = Column(Integer, primary_key=True, nullable=False)
@@ -215,7 +212,7 @@ class AlexFilmParser(object):
         url_regexp = re.compile(r'f=(\d+)', flags=re.IGNORECASE)
         url_nodes = serials_node.find_all('a', href=url_regexp)
         for url_node in url_nodes:
-            href = 'http://alexfilm.cc/' + url_node.get('href')
+            href = url_node.get('href')
             url_match = url_regexp.search(href)
             if not url_match:
                 continue
@@ -345,7 +342,7 @@ class AlexFilmPlugin(object):
             return False
 
         download_url = download_node.get('href')
-        download_url = process_url(download_url, default_scheme=url_scheme, default_host=url_host)
+        download_url = process_url(download_url, topic_response.url)
 
         entry['url'] = download_url
         return True
@@ -363,6 +360,10 @@ class AlexFilmPlugin(object):
         sleep(3)
 
         shows = AlexFilmParser.parse_shows_page(serials_html)
+        if shows:
+            for show in shows:
+                show.url = process_url(show.url, serials_response.url)
+
         return shows
 
     def search_show(self, task, title, db_session):

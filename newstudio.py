@@ -23,25 +23,18 @@ from sqlalchemy.types import TypeDecorator, VARCHAR
 
 plugin_name = 'newstudio'
 
-Base = versioned_base(plugin_name, 0)
 log = logging.getLogger(plugin_name)
-
-viewtopic_url_regexp = re.compile(r'^https?://(?:www\.)?newstudio\.tv/viewtopic\.php\?t=(\d+).*$', flags=re.IGNORECASE)
-download_url_regexp = re.compile(r'^(?:.*)download.php\?id=(\d+)$', flags=re.IGNORECASE)
-
-url_scheme = 'http'
-url_host = 'newstudio.tv'
+Base = versioned_base(plugin_name, 0)
 
 
-def process_url(url, default_scheme, default_host):
-    split_result = urlsplit(url)
-    fragments = list(split_result)
+def process_url(url, base_url):
+    base_fragments = list(urlsplit(base_url))
+    fragments = list(urlsplit(url))
     if len(fragments[0]) <= 0:
-        fragments[0] = default_scheme
+        fragments[0] = base_fragments[0]
     if len(fragments[1]) <= 0:
-        fragments[1] = default_host
-    url = urlunsplit(fragments)
-    return url
+        fragments[1] = base_fragments[1]
+    return urlunsplit(fragments)
 
 
 # region NewStudioAuthPlugin
@@ -178,6 +171,9 @@ class NewStudioAuthPlugin(object):
 
 
 # region NewStudioPlugin
+viewtopic_url_regexp = re.compile(r'^https?://(?:www\.)?newstudio\.tv/viewtopic\.php\?t=(\d+).*$', flags=re.IGNORECASE)
+download_url_regexp = re.compile(r'^(?:.*)download.php\?id=(\d+)$', flags=re.IGNORECASE)
+
 ep_regexp = re.compile(r"\([Сс]езон\s+(\d+)\W+[Cс]ерия\s+(\d+)\)", flags=re.IGNORECASE)
 
 
@@ -221,7 +217,7 @@ class NewStudioParser(object):
             link_nodes = inner_node.find_all('a')
             for link_node in link_nodes:
                 viewforum_link = link_node.get('href')
-                viewforum_link = process_url(viewforum_link, default_scheme=url_scheme, default_host=url_host)
+                # viewforum_link = process_url(viewforum_link, default_scheme=url_scheme, default_host=url_host)
 
                 url_match = url_regexp.search(viewforum_link)
                 if not url_match:
@@ -347,7 +343,7 @@ class NewStudioPlugin(object):
         download_node = viewtopic_soup.find('a', href=download_url_regexp)
         if download_node:
             torrent_url = download_node.get('href')
-            torrent_url = process_url(torrent_url, default_scheme=url_scheme, default_host=url_host)
+            torrent_url = process_url(torrent_url, viewtopic_response.url)
             entry['url'] = torrent_url
             return True
 
@@ -373,6 +369,10 @@ class NewStudioPlugin(object):
         log.debug("Parsing serials page `{0}`...".format(serials_url))
 
         shows = NewStudioParser.parse_shows_page(serials_html)
+        if shows:
+            for show in shows:
+                show.url = process_url(show.url, serials_response.url)
+
         return shows
 
     def search_show(self, task, title, db_session):
@@ -444,7 +444,7 @@ class NewStudioPlugin(object):
                             except Exception:
                                 continue
                             page_link = pagination_link_node.get('href')
-                            page_link = process_url(page_link, default_scheme=url_scheme, default_host=url_host)
+                            page_link = process_url(page_link, viewforum_response.url)
                             show_pages.append(page_link)
 
                 accordion_node = viewforum_tree.find('div', class_='accordion-inner')
@@ -474,7 +474,7 @@ class NewStudioPlugin(object):
                         quality = quality_match.group(1)
 
                     torrent_url = link_node.get('href')
-                    torrent_url = process_url(torrent_url, default_scheme=url_scheme, default_host=url_host)
+                    torrent_url = process_url(torrent_url, viewforum_response.url)
 
                     entry = Entry()
                     entry['title'] = "{0} / s{1:02d}e{2:02d} / {3}".format(search_title, season, episode, quality)
