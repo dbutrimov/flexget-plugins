@@ -107,9 +107,9 @@ class BaibakoAuth(AuthBase):
             log.debug('Using previously saved cookie.')
             self.cookies_ = cookies
 
-    def __call__(self, r):
-        r.prepare_cookies(self.cookies_)
-        return r
+    def __call__(self, request):
+        request.prepare_cookies(self.cookies_)
+        return request
 
 
 class BaibakoAuthPlugin(object):
