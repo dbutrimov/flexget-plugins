@@ -7,7 +7,7 @@ import logging
 import re
 from datetime import datetime, timedelta
 from time import sleep
-from urllib.parse import urlsplit, urlunsplit
+from urllib.parse import urljoin
 
 from bs4 import BeautifulSoup
 from flexget import plugin
@@ -28,13 +28,7 @@ Base = versioned_base(plugin_name, 0)
 
 
 def process_url(url, base_url):
-    base_fragments = list(urlsplit(base_url))
-    fragments = list(urlsplit(url))
-    if len(fragments[0]) <= 0:
-        fragments[0] = base_fragments[0]
-    if len(fragments[1]) <= 0:
-        fragments[1] = base_fragments[1]
-    return urlunsplit(fragments)
+    return urljoin(base_url, url)
 
 
 # region LostFilmAuthPlugin
