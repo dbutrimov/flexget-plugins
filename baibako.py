@@ -318,11 +318,16 @@ class BaibakoPlugin(object):
     """
 
     schema = {
-        'type': 'object',
-        'properties': {
-            'serial_tab': {'type': 'string'}
-        },
-        'additionalProperties': False
+        'oneOf': [
+            {'type': 'boolean'},
+            {
+                'type': 'object',
+                'properties': {
+                    'serial_tab': {'type': 'string', 'default': 'all'}
+                },
+                'additionalProperties': False
+            }
+        ]
     }
 
     def url_rewritable(self, task, entry):
