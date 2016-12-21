@@ -18,6 +18,19 @@ lostfilm_auth:
   password: 'password_here'
 ```
 
+#### UrlRewrite
+
+```yaml
+lostfilm:
+	regexp: '720p'
+```
+
+#### Search
+
+```yaml
+lostfilm: yes
+```
+
 ---
 
 ## NewStudio
@@ -48,6 +61,17 @@ Web site: [baibako.tv](http://baibako.tv)
 baibako_auth:
 	username: 'username_here'
 	password: 'password_here'
+```
+
+#### Search
+
+```yaml
+baibako: yes
+```
+
+```yaml
+baibako:
+	serial_tab: 'all'  # 'hd720', 'hd1080', 'x264', 'xvid' or 'all' (default)
 ```
 
 ---
