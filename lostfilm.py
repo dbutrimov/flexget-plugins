@@ -365,11 +365,16 @@ class LostFilmPlugin(object):
     config_ = {}
 
     schema = {
-        'type': 'object',
-        'properties': {
-            'regexp': {'type': 'string', 'format': 'regex'}
-        },
-        'additionalProperties': False
+        'oneOf': [
+            {'type': 'boolean'},
+            {
+                'type': 'object',
+                'properties': {
+                    'regexp': {'type': 'string', 'format': 'regex', 'default': '*'}
+                },
+                'additionalProperties': False
+            }
+        ]
     }
 
     def on_task_start(self, task, config):
@@ -470,7 +475,7 @@ class LostFilmPlugin(object):
             torrents_html = torrents_response.content
             sleep(3)
 
-        text_pattern = self.config_.get('regexp', '.*')
+        text_pattern = self.config_.get('regexp', '*')
         text_regexp = re.compile(text_pattern, flags=re.IGNORECASE)
 
         log.debug("Parsing torrent links...")
