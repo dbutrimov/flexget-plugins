@@ -21,10 +21,11 @@ from requests.auth import AuthBase
 from sqlalchemy import Column, Unicode, Integer, DateTime, UniqueConstraint, ForeignKey, func
 from sqlalchemy.types import TypeDecorator, VARCHAR
 
-plugin_name = 'newstudio'
+PLUGIN_NAME = 'newstudio'
+SCHEMA_VER = 0
 
-log = logging.getLogger(plugin_name)
-Base = versioned_base(plugin_name, 0)
+log = logging.getLogger(PLUGIN_NAME)
+Base = versioned_base(PLUGIN_NAME, SCHEMA_VER)
 
 
 def process_url(url, base_url):
@@ -121,7 +122,7 @@ class NewStudioAuthPlugin(object):
             'username': {'type': 'string'},
             'password': {'type': 'string'}
         },
-        "additionalProperties": False
+        'additionalProperties': False
     }
 
     auth_cache = {}
@@ -165,10 +166,10 @@ class NewStudioAuthPlugin(object):
 
 
 # region NewStudioPlugin
-viewtopic_url_regexp = re.compile(r'^https?://(?:www\.)?newstudio\.tv/viewtopic\.php\?t=(\d+).*$', flags=re.IGNORECASE)
-download_url_regexp = re.compile(r'^(?:.*)download.php\?id=(\d+)$', flags=re.IGNORECASE)
+TOPIC_URL_REGEXP = re.compile(r'^https?://(?:www\.)?newstudio\.tv/viewtopic\.php\?t=(\d+).*$', flags=re.IGNORECASE)
+DOWNLOAD_URL_REGEXP = re.compile(r'^(?:.*)download.php\?id=(\d+)$', flags=re.IGNORECASE)
 
-ep_regexp = re.compile(r"\([Сс]езон\s+(\d+)\W+[Cс]ерия\s+(\d+)\)", flags=re.IGNORECASE)
+EPISODE_REGEXP = re.compile(r"\([Сс]езон\s+(\d+)\W+[Cс]ерия\s+(\d+)\)", flags=re.IGNORECASE)
 
 
 class DbNewStudioShow(Base):
@@ -317,7 +318,7 @@ class NewStudioDatabase(object):
 class NewStudioPlugin(object):
     def url_rewritable(self, task, entry):
         viewtopic_url = entry['url']
-        return viewtopic_url_regexp.match(viewtopic_url)
+        return TOPIC_URL_REGEXP.match(viewtopic_url)
 
     def url_rewrite(self, task, entry):
         viewtopic_url = entry['url']
@@ -334,7 +335,7 @@ class NewStudioPlugin(object):
         sleep(3)
 
         viewtopic_soup = BeautifulSoup(viewtopic_html, 'html.parser')
-        download_node = viewtopic_soup.find('a', href=download_url_regexp)
+        download_node = viewtopic_soup.find('a', href=DOWNLOAD_URL_REGEXP)
         if download_node:
             torrent_url = download_node.get('href')
             torrent_url = process_url(torrent_url, viewtopic_response.url)
@@ -452,7 +453,7 @@ class NewStudioPlugin(object):
                         continue
 
                     title = link_node.text
-                    ep_match = ep_regexp.search(title)
+                    ep_match = EPISODE_REGEXP.search(title)
                     if not ep_match:
                         continue
 
@@ -485,4 +486,4 @@ class NewStudioPlugin(object):
 @event('plugin.register')
 def register_plugin():
     plugin.register(NewStudioAuthPlugin, 'newstudio_auth', api_ver=2)
-    plugin.register(NewStudioPlugin, plugin_name, groups=['urlrewriter', 'search'], api_ver=2)
+    plugin.register(NewStudioPlugin, PLUGIN_NAME, groups=['urlrewriter', 'search'], api_ver=2)

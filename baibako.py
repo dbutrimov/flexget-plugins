@@ -21,10 +21,11 @@ from requests.auth import AuthBase
 from sqlalchemy import Column, Unicode, Integer, DateTime, UniqueConstraint, ForeignKey, func
 from sqlalchemy.types import TypeDecorator, VARCHAR
 
-plugin_name = 'baibako'
+PLUGIN_NAME = 'baibako'
+SCHEMA_VER = 0
 
-log = logging.getLogger(plugin_name)
-Base = versioned_base(plugin_name, 0)
+log = logging.getLogger(PLUGIN_NAME)
+Base = versioned_base(PLUGIN_NAME, SCHEMA_VER)
 
 
 def process_url(url, base_url):
@@ -114,7 +115,7 @@ class BaibakoAuthPlugin(object):
             'username': {'type': 'string'},
             'password': {'type': 'string'}
         },
-        "additionalProperties": False
+        'additionalProperties': False
     }
 
     auth_cache = {}
@@ -158,10 +159,10 @@ class BaibakoAuthPlugin(object):
 
 
 # region BaibakoPlugin
-details_url_regexp = re.compile(r'^https?://(?:www\.)?baibako\.tv/details\.php\?id=(\d+).*$', flags=re.IGNORECASE)
+DETAILS_URL_REGEXP = re.compile(r'^https?://(?:www\.)?baibako\.tv/details\.php\?id=(\d+).*$', flags=re.IGNORECASE)
 
-table_class_regexp = re.compile(r'table.*', flags=re.IGNORECASE)
-episode_title_regexp = re.compile(
+TABLE_CLASS_REGEXP = re.compile(r'table.*', flags=re.IGNORECASE)
+EPISODE_TITLE_REGEXP = re.compile(
     r'^([^/]*?)\s*/\s*([^/]*?)\s*/\s*s(\d+)e(\d+)(?:-(\d+))?\s*/\s*([^/]*?)\s*(?:(?:/.*)|$)',
     flags=re.IGNORECASE)
 
@@ -193,7 +194,7 @@ class BaibakoParser(object):
     @staticmethod
     def parse_shows_page(html):
         serials_tree = BeautifulSoup(html, 'html.parser')
-        serials_node = serials_tree.find('table', class_=table_class_regexp)
+        serials_node = serials_tree.find('table', class_=TABLE_CLASS_REGEXP)
         if not serials_node:
             log.error('Error while parsing serials page: node <table class=`table.*`> are not found')
             return None
@@ -332,11 +333,11 @@ class BaibakoPlugin(object):
 
     def url_rewritable(self, task, entry):
         url = entry['url']
-        return details_url_regexp.match(url)
+        return DETAILS_URL_REGEXP.match(url)
 
     def url_rewrite(self, task, entry):
         url = entry['url']
-        url_match = details_url_regexp.search(url)
+        url_match = DETAILS_URL_REGEXP.search(url)
         if not url_match:
             reject_reason = "Url don't matched: {0}".format(url)
             log.verbose(reject_reason)
@@ -423,7 +424,7 @@ class BaibakoPlugin(object):
             sleep(3)
 
             serial_tree = BeautifulSoup(serial_html, 'html.parser')
-            serial_table_node = serial_tree.find('table', class_=table_class_regexp)
+            serial_table_node = serial_tree.find('table', class_=TABLE_CLASS_REGEXP)
             if not serial_table_node:
                 log.error('Error while parsing serial page: node <table class=`table.*`> are not found')
                 continue
@@ -431,7 +432,7 @@ class BaibakoPlugin(object):
             link_nodes = serial_table_node.find_all('a', href=episode_link_regexp)
             for link_node in link_nodes:
                 link_title = link_node.text
-                episode_title_match = episode_title_regexp.search(link_title)
+                episode_title_match = EPISODE_TITLE_REGEXP.search(link_title)
                 if not episode_title_match:
                     log.verbose("Error while parsing serial page: title `{0}` are not matched".format(link_title))
                     continue
@@ -474,4 +475,4 @@ class BaibakoPlugin(object):
 @event('plugin.register')
 def register_plugin():
     plugin.register(BaibakoAuthPlugin, 'baibako_auth', api_ver=2)
-    plugin.register(BaibakoPlugin, plugin_name, groups=['urlrewriter', 'search'], api_ver=2)
+    plugin.register(BaibakoPlugin, PLUGIN_NAME, groups=['urlrewriter', 'search'], api_ver=2)

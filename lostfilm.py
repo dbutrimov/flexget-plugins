@@ -21,10 +21,11 @@ from requests.auth import AuthBase
 from sqlalchemy import Column, Unicode, Integer, DateTime, UniqueConstraint, ForeignKey, func
 from sqlalchemy.types import TypeDecorator, VARCHAR
 
-plugin_name = 'lostfilm'
+PLUGIN_NAME = 'lostfilm'
+SCHEMA_VER = 0
 
-log = logging.getLogger(plugin_name)
-Base = versioned_base(plugin_name, 0)
+log = logging.getLogger(PLUGIN_NAME)
+Base = versioned_base(PLUGIN_NAME, SCHEMA_VER)
 
 
 def process_url(url, base_url):
@@ -150,7 +151,7 @@ class LostFilmAuthPlugin(object):
             'username': {'type': 'string'},
             'password': {'type': 'string'}
         },
-        "additionalProperties": False
+        'additionalProperties': False
     }
 
     auth_cache = {}
@@ -194,14 +195,14 @@ class LostFilmAuthPlugin(object):
 
 
 # region LostFilmPlugin
-download_url_regexp = re.compile(r'^https?://(?:www\.)?lostfilm\.tv/download\.php\?id=(\d+).*$', flags=re.IGNORECASE)
-details_url_regexp = re.compile(r'^https?://(?:www\.)?lostfilm\.tv/details\.php\?id=(\d+).*$', flags=re.IGNORECASE)
-replace_download_url_regexp = re.compile(r'/download\.php', flags=re.IGNORECASE)
+DOWNLOAD_URL_REGEXP = re.compile(r'^https?://(?:www\.)?lostfilm\.tv/download\.php\?id=(\d+).*$', flags=re.IGNORECASE)
+DETAILS_URL_REGEXP = re.compile(r'^https?://(?:www\.)?lostfilm\.tv/details\.php\?id=(\d+).*$', flags=re.IGNORECASE)
+REPLACE_DOWNLOAD_URL_REGEXP = re.compile(r'/download\.php', flags=re.IGNORECASE)
 
-show_all_releases_regexp = re.compile(
+SHOW_ALL_RELEASES_REGEXP = re.compile(
     r'ShowAllReleases\(\\?[\'"](.+?)\\?[\'"],\s*\\?[\'"](.+?)\\?[\'"],\s*\\?[\'"](.+?)\\?[\'"]\)',
     flags=re.IGNORECASE)
-replace_location_regexp = re.compile(r'location\.replace\("(.+?)"\);', flags=re.IGNORECASE)
+REPLACE_LOCATION_REGEXP = re.compile(r'location\.replace\("(.+?)"\);', flags=re.IGNORECASE)
 
 
 class DbLostFilmShow(Base):
@@ -385,9 +386,9 @@ class LostFilmPlugin(object):
 
     def url_rewritable(self, task, entry):
         url = entry['url']
-        if download_url_regexp.match(url):
+        if DOWNLOAD_URL_REGEXP.match(url):
             return True
-        if details_url_regexp.match(url):
+        if DETAILS_URL_REGEXP.match(url):
             return True
 
         return False
@@ -398,8 +399,8 @@ class LostFilmPlugin(object):
         log.debug("Starting with url `{0}`...".format(details_url))
 
         # Convert download url to details if needed
-        if download_url_regexp.match(details_url):
-            details_url = replace_download_url_regexp.sub('/details.php', details_url)
+        if DOWNLOAD_URL_REGEXP.match(details_url):
+            details_url = REPLACE_DOWNLOAD_URL_REGEXP.sub('/details.php', details_url)
             log.debug("Rewrite url to `{0}`".format(details_url))
 
         log.debug("Fetching details page `{0}`...".format(details_url))
@@ -425,14 +426,14 @@ class LostFilmPlugin(object):
             entry.reject(reject_reason)
             return False
 
-        onclick_node = mid_node.find('a', class_='a_download', onclick=show_all_releases_regexp)
+        onclick_node = mid_node.find('a', class_='a_download', onclick=SHOW_ALL_RELEASES_REGEXP)
         if not onclick_node:
             reject_reason = "Error while parsing details page: node <a class=`a_download`> are not found"
             log.error(reject_reason)
             entry.reject(reject_reason)
             return False
 
-        onclick_match = show_all_releases_regexp.search(onclick_node.get('onclick'))
+        onclick_match = SHOW_ALL_RELEASES_REGEXP.search(onclick_node.get('onclick'))
         if not onclick_match:
             reject_reason = "Error while parsing details page: " \
                             "node <a class=`a_download`> have invalid `onclick` attribute"
@@ -458,7 +459,7 @@ class LostFilmPlugin(object):
         sleep(3)
 
         torrents_html_text = torrents_html.decode(torrents_response.encoding)
-        replace_location_match = replace_location_regexp.search(torrents_html_text)
+        replace_location_match = REPLACE_LOCATION_REGEXP.search(torrents_html_text)
         if replace_location_match:
             replace_location_url = replace_location_match.group(1)
 
@@ -624,4 +625,4 @@ class LostFilmPlugin(object):
 @event('plugin.register')
 def register_plugin():
     plugin.register(LostFilmAuthPlugin, 'lostfilm_auth', api_ver=2)
-    plugin.register(LostFilmPlugin, plugin_name, groups=['urlrewriter', 'search'], api_ver=2)
+    plugin.register(LostFilmPlugin, PLUGIN_NAME, groups=['urlrewriter', 'search'], api_ver=2)

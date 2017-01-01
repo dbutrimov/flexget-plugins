@@ -21,10 +21,11 @@ from requests.auth import AuthBase
 from sqlalchemy import Column, Unicode, Integer, DateTime, UniqueConstraint, ForeignKey, func
 from sqlalchemy.types import TypeDecorator, VARCHAR
 
-plugin_name = 'alexfilm'
+PLUGIN_NAME = 'alexfilm'
+SCHEMA_VER = 0
 
-log = logging.getLogger(plugin_name)
-Base = versioned_base(plugin_name, 0)
+log = logging.getLogger(PLUGIN_NAME)
+Base = versioned_base(PLUGIN_NAME, SCHEMA_VER)
 
 
 def process_url(url, base_url):
@@ -62,8 +63,9 @@ class AlexFilmAccount(Base):
 
 
 class AlexFilmAuth(AuthBase):
-    """Supports downloading of torrents from 'alexfilm' tracker
-    if you pass cookies (CookieJar) to constructor then authentication will be bypassed and cookies will be just set
+    """Supports downloading of torrents from AlexFilm tracker
+    if you pass cookies (CookieJar) to constructor
+    then authentication will be bypassed and cookies will be just set.
     """
 
     def try_authenticate(self, payload):
@@ -121,7 +123,7 @@ class AlexFilmAuthPlugin(object):
             'username': {'type': 'string'},
             'password': {'type': 'string'}
         },
-        "additionalProperties": False
+        'additionalProperties': False
     }
 
     auth_cache = {}
@@ -165,10 +167,6 @@ class AlexFilmAuthPlugin(object):
 
 
 # region AlexFilmPlugin
-topic_url_regexp = re.compile(r'^https?://(?:www\.)?alexfilm\.cc/viewtopic\.php\?t=(\d+).*$', flags=re.IGNORECASE)
-download_url_regexp = re.compile(r'dl\.php\?id=(\d+)', flags=re.IGNORECASE)
-
-
 class DbAlexFilmShow(Base):
     __tablename__ = 'alexfilm_shows'
     id = Column(Integer, primary_key=True, nullable=False)
@@ -306,12 +304,16 @@ class AlexFilmDatabase(object):
         return None
 
 
+TOPIC_URL_REGEXP = re.compile(r'^https?://(?:www\.)?alexfilm\.cc/viewtopic\.php\?t=(\d+).*$', flags=re.IGNORECASE)
+DOWNLOAD_URL_REGEXP = re.compile(r'dl\.php\?id=(\d+)', flags=re.IGNORECASE)
+
+
 class AlexFilmPlugin(object):
     """AlexFilm urlrewrite/search plugin."""
 
     def url_rewritable(self, task, entry):
         url = entry['url']
-        return topic_url_regexp.match(url)
+        return TOPIC_URL_REGEXP.match(url)
 
     def url_rewrite(self, task, entry):
         topic_url = entry['url']
@@ -328,7 +330,7 @@ class AlexFilmPlugin(object):
         sleep(3)
 
         topic_tree = BeautifulSoup(topic_html, 'html.parser')
-        download_node = topic_tree.find('a', href=download_url_regexp)
+        download_node = topic_tree.find('a', href=DOWNLOAD_URL_REGEXP)
         if not download_node:
             reject_reason = "Error while parsing topic page: download node are not found"
             log.error(reject_reason)
@@ -385,7 +387,9 @@ class AlexFilmPlugin(object):
         search_string_regexp = re.compile(r'^(.*?)\s*s(\d+)e(\d+)$', flags=re.IGNORECASE)
         topic_name_regexp = re.compile(
             r"^([^/]*?)\s*/\s*([^/]*?)\s/\s*[Сс]езон\s*(\d+)\s*/\s*[Сс]ерии\s*(\d+)-(\d+).*,\s*(.*)\s*\].*$",
-            re.IGNORECASE)
+            flags=re.IGNORECASE)
+        panel_class_regexp = re.compile(r'panel.*', flags=re.IGNORECASE)
+        url_regexp = re.compile(r'viewtopic\.php\?t=(\d+)', flags=re.IGNORECASE)
 
         # regexp: '^([^/]*?)\s*/\s*([^/]*?)\s/\s*[Сс]езон\s*(\d+)\s*/\s*[Сс]ерии\s*(\d+)-(\d+).*,\s*(.*)\s*\].*$'
         # format: '\2 / \1 / s\3e\4-e\5 / \6'
@@ -420,9 +424,6 @@ class AlexFilmPlugin(object):
                 log.error('Error while parsing serial page: node <table class=`table.*`> are not found')
                 continue
 
-            url_regexp = re.compile(r'viewtopic\.php\?t=(\d+)', flags=re.IGNORECASE)
-
-            panel_class_regexp = re.compile(r'panel.*', flags=re.IGNORECASE)
             panel_nodes = serial_table_node.find_all('div', class_=panel_class_regexp)
             for panel_node in panel_nodes:
                 url_node = panel_node.find('a', href=url_regexp)
@@ -446,7 +447,8 @@ class AlexFilmPlugin(object):
 
                 name = "{0} / {1} / s{2:02d}e{3:02d}-{4:02d} / {5}".format(
                     title, alternative_title, season, first_episode, last_episode, quality)
-                topic_url = 'http://alexfilm.cc/' + url_node.get('href')
+                topic_url = url_node.get('href')
+                topic_url = process_url(topic_url, serial_response.url)
 
                 log.debug("{0} - {1}".format(name, topic_url))
 
@@ -465,4 +467,4 @@ class AlexFilmPlugin(object):
 @event('plugin.register')
 def register_plugin():
     plugin.register(AlexFilmAuthPlugin, 'alexfilm_auth', api_ver=2)
-    plugin.register(AlexFilmPlugin, plugin_name, groups=['urlrewriter', 'search'], api_ver=2)
+    plugin.register(AlexFilmPlugin, PLUGIN_NAME, groups=['urlrewriter', 'search'], api_ver=2)
