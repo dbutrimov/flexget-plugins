@@ -202,7 +202,7 @@ REPLACE_DOWNLOAD_URL_REGEXP = re.compile(r'/download\.php', flags=re.IGNORECASE)
 SHOW_ALL_RELEASES_REGEXP = re.compile(
     r'ShowAllReleases\(\\?[\'"](.+?)\\?[\'"],\s*\\?[\'"](.+?)\\?[\'"],\s*\\?[\'"](.+?)\\?[\'"]\)',
     flags=re.IGNORECASE)
-REPLACE_LOCATION_REGEXP = re.compile(r'location\.replace\("(.+?)"\);', flags=re.IGNORECASE)
+REPLACE_LOCATION_REGEXP = re.compile(r'location\.replace\([\'"](.+?)[\'"]\);', flags=re.IGNORECASE)
 
 
 class DbLostFilmShow(Base):
@@ -393,6 +393,21 @@ class LostFilmPlugin(object):
 
         return False
 
+    def get_response(self, task, url):
+        response = task.requests.get(url)
+        response_content = response.content
+
+        response_html = response_content.decode(response.encoding)
+        replace_location_match = REPLACE_LOCATION_REGEXP.search(response_html)
+        if replace_location_match:
+            replace_location_url = replace_location_match.group(1)
+            replace_location_url = process_url(replace_location_url, response.url)
+            log.debug("`location.replace(...)` has been detected! Redirecting from `{0}` to `{1}`...".format(
+                url, replace_location_url))
+            response = task.requests.get(replace_location_url)
+
+        return response
+
     def url_rewrite(self, task, entry):
         details_url = entry['url']
 
@@ -448,7 +463,7 @@ class LostFilmPlugin(object):
         log.debug(u"Downloading torrents page `{0}`...".format(torrents_url))
 
         try:
-            torrents_response = task.requests.get(torrents_url)
+            torrents_response = self.get_response(task, torrents_url)
         except requests.RequestException as e:
             reject_reason = "Error while fetching page: {0}".format(e)
             log.error(reject_reason)
@@ -457,24 +472,6 @@ class LostFilmPlugin(object):
             return False
         torrents_html = torrents_response.content
         sleep(3)
-
-        torrents_html_text = torrents_html.decode(torrents_response.encoding)
-        replace_location_match = REPLACE_LOCATION_REGEXP.search(torrents_html_text)
-        if replace_location_match:
-            replace_location_url = replace_location_match.group(1)
-
-            log.debug("Redirecting to `{0}`...".format(replace_location_url))
-
-            try:
-                torrents_response = task.requests.get(replace_location_url)
-            except requests.RequestException as e:
-                reject_reason = "Error while fetching page: {0}".format(e)
-                log.error(reject_reason)
-                entry.reject(reject_reason)
-                sleep(3)
-                return False
-            torrents_html = torrents_response.content
-            sleep(3)
 
         text_pattern = self.config_.get('regexp', '*')
         text_regexp = re.compile(text_pattern, flags=re.IGNORECASE)
