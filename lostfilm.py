@@ -32,6 +32,28 @@ def process_url(url, base_url):
     return urljoin(base_url, url)
 
 
+class LostFilmApi(object):
+    API_URL = 'http://lostfilm.tv/ajaxik.php'
+
+    @staticmethod
+    def task_post(task, payload):
+        return LostFilmApi.requests_post(task.requests, payload)
+
+    @staticmethod
+    def requests_post(requests_, payload):
+        response = requests_.post(
+            LostFilmApi.API_URL,
+            data=payload)
+        return response
+
+    @staticmethod
+    def session_post(session, payload):
+        response = session.post(
+            LostFilmApi.API_URL,
+            data=payload)
+        return response
+
+
 # region LostFilmAuthPlugin
 class JSONEncodedDict(TypeDecorator):
     """
@@ -70,35 +92,16 @@ class LostFilmAuth(AuthBase):
     def try_authenticate(self, payload):
         for _ in range(5):
             session = requests.Session()
-            session.headers['User-Agent'] = 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_12_1) ' \
-                                            'AppleWebKit/537.36 (KHTML, like Gecko) Chrome/54.0.2840.98 Safari/537.36'
+            # session.headers['User-Agent'] = 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_12_1) ' \
+            #                                 'AppleWebKit/537.36 (KHTML, like Gecko) Chrome/54.0.2840.98 Safari/537.36'
 
-            response = session.post(
-                'http://login1.bogi.ru/login.php?referer=http%3A%2F%2Fwww.lostfilm.tv%2F',
-                data=payload)
-            response_html = response.text
-
-            response_tree = BeautifulSoup(response_html, 'html.parser')
-            form_node = response_tree.find('form', id='b_form')
-            if form_node:
-                action_url = form_node.get('action')
-
-                action_payload = {}
-                input_nodes = form_node.find_all('input', type='hidden')
-                for input_node in input_nodes:
-                    input_name = input_node.get('name')
-                    input_value = input_node.get('value')
-                    action_payload[input_name] = input_value
-
-                session.post(action_url, data=action_payload)
-
+            response = LostFilmApi.session_post(session, payload)
+            response_json = response.json()
+            if 'error' not in response_json and 'success' in response_json and response_json['success']:
+                # username = response_json['name']
                 cookies = session.cookies.get_dict(domain='.lostfilm.tv')
                 if cookies and len(cookies) > 0:
-                    user_id = cookies.get('uid')
-                    user_pass = cookies.get('pass')
-                    if user_id and user_pass:
-                        cookies = {'uid': user_id, 'pass': user_pass}
-                        return cookies
+                    return cookies
 
             sleep(3)
 
@@ -109,12 +112,11 @@ class LostFilmAuth(AuthBase):
             log.debug('LostFilm cookie not found. Requesting new one.')
 
             payload_ = {
-                'login': username,
-                'password': password,
-                'module': 1,
-                'target': 'http://lostfilm.tv/',
-                'repage': 'user',
-                'act': 'login'
+                'act': 'users',
+                'type': 'login',
+                'mail': username,
+                'pass': password,
+                'rem': 1
             }
 
             self.cookies_ = self.try_authenticate(payload_)
@@ -195,16 +197,6 @@ class LostFilmAuthPlugin(object):
 
 
 # region LostFilmPlugin
-DOWNLOAD_URL_REGEXP = re.compile(r'^https?://(?:www\.)?lostfilm\.tv/download\.php\?id=(\d+).*$', flags=re.IGNORECASE)
-DETAILS_URL_REGEXP = re.compile(r'^https?://(?:www\.)?lostfilm\.tv/details\.php\?id=(\d+).*$', flags=re.IGNORECASE)
-REPLACE_DOWNLOAD_URL_REGEXP = re.compile(r'/download\.php', flags=re.IGNORECASE)
-
-SHOW_ALL_RELEASES_REGEXP = re.compile(
-    r'ShowAllReleases\(\\?[\'"](.+?)\\?[\'"],\s*\\?[\'"](.+?)\\?[\'"],\s*\\?[\'"](.+?)\\?[\'"]\)',
-    flags=re.IGNORECASE)
-REPLACE_LOCATION_REGEXP = re.compile(r'location\.replace\([\'"](.+?)[\'"]\);', flags=re.IGNORECASE)
-
-
 class DbLostFilmShow(Base):
     __tablename__ = 'lostfilm_shows'
     id = Column(Integer, primary_key=True, nullable=False)
@@ -221,6 +213,18 @@ class DbLostFilmShowAlternateName(Base):
     __table_args__ = (UniqueConstraint('show_id', 'title', name='_show_title_uc'),)
 
 
+class DbLostFilmEpisode(Base):
+    __tablename__ = 'lostfilm_episode'
+    id = Column(Integer, primary_key=True, autoincrement=True, nullable=False)
+    show_id = Column(Integer, nullable=False)
+    season = Column(Integer, nullable=False)
+    episode = Column(Integer, nullable=False)
+    title = Column(Unicode, nullable=False)
+    url = Column(Unicode, nullable=False)
+    timestamp = Column(DateTime, nullable=False)
+    __table_args__ = (UniqueConstraint('show_id', 'season', 'episode', name='_show_episode_uc'),)
+
+
 class LostFilmShow(object):
     def __init__(self, show_id, titles, url):
         self.show_id = show_id
@@ -231,40 +235,23 @@ class LostFilmShow(object):
 class LostFilmParser(object):
     @staticmethod
     def parse_shows_page(html):
-        serials_tree = BeautifulSoup(html, 'html.parser')
-        mid_node = serials_tree.find('div', class_='mid')
-        if not mid_node:
-            log.error("Error while parsing details page: node <div class=`mid`> are not found")
-            return None
+        shows_json = json.loads(html)
+        if 'result' in shows_json and shows_json['result'] == 'ok':
+            shows = set()
+            shows_data = shows_json['data']
+            for item in shows_data:
+                show_id = int(item['id'])
+                title = item['title']
+                origin_title = item['title_orig']
+                show_url = item['link']
 
-        shows = set()
+                show = LostFilmShow(show_id=show_id, titles=[title, origin_title], url=show_url)
+                shows.add(show)
 
-        url_regexp = re.compile(r'cat=(\d+)', flags=re.IGNORECASE)
-        link_nodes = mid_node.find_all('a', class_='bb_a')
-        for link_node in link_nodes:
-            category_link = link_node.get('href')
-            # category_link = process_url(category_link, default_scheme=url_scheme, default_host=url_host)
+            log.debug("{0:d} show(s) are found".format(len(shows)))
+            return shows
 
-            url_match = url_regexp.search(category_link)
-            if not url_match:
-                continue
-
-            show_id = int(url_match.group(1))
-
-            link_text = link_node.get_text(separator='\n')
-            titles = link_text.splitlines()
-            if len(titles) <= 0:
-                log.error("No titles are found")
-                continue
-
-            titles = [x.strip('()') for x in titles]
-
-            # log.debug("Serial `{0}` was added".format(" / ".join(titles)))
-            show = LostFilmShow(show_id=show_id, titles=titles, url=category_link)
-            shows.add(show)
-
-        log.debug("{0:d} show(s) are found".format(len(shows)))
-        return shows
+        return None
 
 
 class LostFilmDatabase(object):
@@ -352,6 +339,39 @@ class LostFilmDatabase(object):
 
         return None
 
+    @staticmethod
+    def find_episode(show_id, season, episode, db_session):
+        return db_session.query(DbLostFilmEpisode).filter(
+            DbLostFilmEpisode.show_id == show_id,
+            DbLostFilmEpisode.season == season,
+            DbLostFilmEpisode.episode == episode).first()
+
+    @staticmethod
+    def insert_episode(show_id, season, episode, title, url, db_session):
+        db_episode = LostFilmDatabase.find_episode(show_id, season, episode, db_session)
+        now = datetime.now()
+        if not db_episode:
+            db_episode = DbLostFilmEpisode(
+                show_id=show_id,
+                season=season,
+                episode=episode)
+        db_episode.title = title
+        db_episode.url = url
+        db_episode.timestamp = now
+
+        db_session.add(db_episode)
+        db_session.commit()
+
+        return db_episode
+
+
+EPISODE_URL_REGEXP = re.compile(r'^https?://(?:www\.)?lostfilm\.tv/series/([^/]+?)/season_(\d+)/episode_(\d+).*$', flags=re.IGNORECASE)
+PLAY_EPISODE_REGEXP = re.compile(
+    r'PlayEpisode\(\\?[\'"](.+?)\\?[\'"],\s*\\?[\'"](.+?)\\?[\'"],\s*\\?[\'"](.+?)\\?[\'"]\)',
+    flags=re.IGNORECASE)
+
+REPLACE_LOCATION_REGEXP = re.compile(r'location\.replace\([\'"](.+?)[\'"]\);', flags=re.IGNORECASE)
+
 
 class LostFilmPlugin(object):
     """
@@ -378,21 +398,6 @@ class LostFilmPlugin(object):
         ]
     }
 
-    def on_task_start(self, task, config):
-        if not isinstance(config, dict):
-            log.verbose("Config was not determined - use default.")
-        else:
-            self.config_ = config
-
-    def url_rewritable(self, task, entry):
-        url = entry['url']
-        if DOWNLOAD_URL_REGEXP.match(url):
-            return True
-        if DETAILS_URL_REGEXP.match(url):
-            return True
-
-        return False
-
     def get_response(self, task, url):
         response = task.requests.get(url)
         response_content = response.content
@@ -408,57 +413,64 @@ class LostFilmPlugin(object):
 
         return response
 
+    def on_task_start(self, task, config):
+        if not isinstance(config, dict):
+            log.verbose("Config was not determined - use default.")
+        else:
+            self.config_ = config
+
+    def url_rewritable(self, task, entry):
+        url = entry['url']
+        if EPISODE_URL_REGEXP.match(url):
+            return True
+
+        return False
+
     def url_rewrite(self, task, entry):
-        details_url = entry['url']
+        episode_url = entry['url']
 
-        log.debug("Starting with url `{0}`...".format(details_url))
-
-        # Convert download url to details if needed
-        if DOWNLOAD_URL_REGEXP.match(details_url):
-            details_url = REPLACE_DOWNLOAD_URL_REGEXP.sub('/details.php', details_url)
-            log.debug("Rewrite url to `{0}`".format(details_url))
-
-        log.debug("Fetching details page `{0}`...".format(details_url))
+        log.debug("Starting with url `{0}`...".format(episode_url))
+        log.debug("Fetching episode page `{0}`...".format(episode_url))
 
         try:
-            details_response = task.requests.get(details_url)
+            episode_response = task.requests.get(episode_url)
         except requests.RequestException as e:
             reject_reason = "Error while fetching page: {0}".format(e)
             log.error(reject_reason)
             entry.reject(reject_reason)
             sleep(3)
             return False
-        details_html = details_response.content
+        episode_html = episode_response.content
         sleep(3)
 
-        log.debug("Parsing details page `{0}`...".format(details_url))
+        log.debug("Parsing episode page `{0}`...".format(episode_url))
 
-        details_tree = BeautifulSoup(details_html, 'html.parser')
-        mid_node = details_tree.find('div', class_='mid')
-        if not mid_node:
-            reject_reason = "Error while parsing details page: node <div class=`mid`> are not found"
+        episode_tree = BeautifulSoup(episode_html, 'html.parser')
+        overlay_node = episode_tree.find('div', class_='overlay-pane')
+        if not overlay_node:
+            reject_reason = "Error while parsing episode page: node <div class=`overlay-pane`> are not found"
             log.error(reject_reason)
             entry.reject(reject_reason)
             return False
 
-        onclick_node = mid_node.find('a', class_='a_download', onclick=SHOW_ALL_RELEASES_REGEXP)
-        if not onclick_node:
-            reject_reason = "Error while parsing details page: node <a class=`a_download`> are not found"
+        button_node = overlay_node.find('div', class_='external-btn', onclick=PLAY_EPISODE_REGEXP)
+        if not button_node:
+            reject_reason = "Error while parsing episode page: node <div class=`external-btn`> are not found"
             log.error(reject_reason)
             entry.reject(reject_reason)
             return False
 
-        onclick_match = SHOW_ALL_RELEASES_REGEXP.search(onclick_node.get('onclick'))
+        onclick_match = PLAY_EPISODE_REGEXP.search(button_node.get('onclick'))
         if not onclick_match:
-            reject_reason = "Error while parsing details page: " \
-                            "node <a class=`a_download`> have invalid `onclick` attribute"
+            reject_reason = "Error while parsing episode page: " \
+                            "node <div class=`external-btn`> have invalid `onclick` attribute"
             log.error(reject_reason)
             entry.reject(reject_reason)
             return False
-        category = onclick_match.group(1)
+        show_id = onclick_match.group(1)
         season = onclick_match.group(2)
         episode = onclick_match.group(3)
-        torrents_url = "http://www.lostfilm.tv/nrdr2.php?c={0}&s={1}&e={2}".format(category, season, episode)
+        torrents_url = "http://lostfilm.tv/v_search.php?c={0}&s={1}&e={2}".format(show_id, season, episode)
 
         log.debug(u"Downloading torrents page `{0}`...".format(torrents_url))
 
@@ -479,20 +491,22 @@ class LostFilmPlugin(object):
         log.debug("Parsing torrent links...")
 
         torrents_tree = BeautifulSoup(torrents_html, 'html.parser')
-        table_nodes = torrents_tree.find_all('table')
-        for table_node in table_nodes:
-            link_node = table_node.find('a')
-            if link_node:
-                torrent_link = link_node.get('href')
-                description_text = link_node.get_text()
-                if text_regexp.search(description_text):
-                    log.debug("Torrent link was accepted! [ regexp: `{0}`, description: `{1}` ]".format(
-                        text_pattern, description_text))
-                    entry['url'] = torrent_link
-                    return True
-                else:
-                    log.debug("Torrent link was rejected: [ regexp: `{0}`, description: `{1}` ]".format(
-                        text_pattern, description_text))
+        torrents_list_node = torrents_tree.find('div', class_='inner-box--list')
+        if torrents_list_node:
+            item_nodes = torrents_list_node.find_all('div', class_='inner-box--item')
+            for item_node in item_nodes:
+                link_node = item_node.find('a')
+                if link_node:
+                    torrent_link = link_node.get('href')
+                    description_text = link_node.get_text()
+                    if text_regexp.search(description_text):
+                        log.debug("Torrent link was accepted! [ regexp: `{0}`, description: `{1}` ]".format(
+                            text_pattern, description_text))
+                        entry['url'] = torrent_link
+                        return True
+                    else:
+                        log.debug("Torrent link was rejected: [ regexp: `{0}`, description: `{1}` ]".format(
+                            text_pattern, description_text))
 
         reject_reason = "Torrent link was not detected with regexp `{0}`".format(text_pattern)
         log.error(reject_reason)
@@ -500,25 +514,31 @@ class LostFilmPlugin(object):
         return False
 
     def get_shows(self, task):
-        serials_url = 'http://www.lostfilm.tv/serials.php'
+        step = 10
+        total = 0
 
-        log.debug("Fetching serials page `{0}`...".format(serials_url))
+        shows = set()
+        while True:
+            payload = {
+                'act': 'serial',
+                'type': 'search',
+                'o': total,  # offset
+                's': 2,  # alphabetical sorting
+                't': 0  # all shows
+            }
 
-        try:
-            serials_response = task.requests.get(serials_url)
-        except requests.RequestException as e:
-            log.error("Error while fetching page: {0}".format(e))
-            sleep(3)
-            return None
-        serials_html = serials_response.content
-        sleep(3)
+            response = LostFilmApi.requests_post(task.requests, payload)
+            parsed_shows = LostFilmParser.parse_shows_page(response.text)
+            count = 0
+            if parsed_shows:
+                count = len(parsed_shows)
+                for show in parsed_shows:
+                    show.url = process_url(show.url, response.url)
+                    shows.add(show)
 
-        log.debug("Parsing serials page `{0}`...".format(serials_url))
-
-        shows = LostFilmParser.parse_shows_page(serials_html)
-        if shows:
-            for show in shows:
-                show.url = process_url(show.url, serials_response.url)
+            total += count
+            if count < step:
+                break
 
         return shows
 
@@ -544,7 +564,7 @@ class LostFilmPlugin(object):
         db_session = Session()
 
         ep_regexp = re.compile(r"(\d+)\s+[Сс]езон\s+(\d+)\s+[Сс]ерия", flags=re.IGNORECASE)
-        row_regexp = re.compile(r't_row.*', flags=re.IGNORECASE)
+        goto_regexp = re.compile(r'^goTo\([\'"](.*?)[\'"].*\)$', flags=re.IGNORECASE)
         search_regexp = re.compile(r'^(.*?)\s*s(\d+?)e(\d+?)$', flags=re.IGNORECASE)
 
         for search_string in entry.get('search_strings', [entry['title']]):
@@ -562,45 +582,61 @@ class LostFilmPlugin(object):
             if not show:
                 continue
 
-            try:
-                category_response = task.requests.get(show.url)
-            except requests.RequestException as e:
-                log.error("Error while fetching page: {0}".format(e))
+            db_episode = LostFilmDatabase.find_episode(show.show_id, search_season, search_episode, db_session)
+            if not db_episode:
+                seasons_url = urljoin(show.url + '/', 'seasons')
+                try:
+                    seasons_response = task.requests.get(seasons_url)
+                except requests.RequestException as e:
+                    log.error("Error while fetching page: {0}".format(e))
+                    sleep(3)
+                    continue
+                seasons_html = seasons_response.content
                 sleep(3)
-                continue
-            category_html = category_response.content
-            sleep(3)
 
-            category_tree = BeautifulSoup(category_html, 'html.parser')
-            mid_node = category_tree.find('div', class_='mid')
-
-            row_nodes = mid_node.find_all('div', class_=row_regexp)
-            for row_node in row_nodes:
-                ep_node = row_node.find('span', class_='micro')
-                if not ep_node:
+                category_tree = BeautifulSoup(seasons_html, 'html.parser')
+                seasons_node = category_tree.find('div', class_='series-block')
+                if not seasons_node:
+                    log.error("Error while parsing episodes page: node <div class=`series-block`> are not found")
                     continue
 
-                ep_match = ep_regexp.search(ep_node.get_text())
-                if not ep_match:
-                    continue
+                season_nodes = seasons_node.find_all('table', class_='movie-parts-list')
+                for season_node in season_nodes:
+                    episode_nodes = season_node.find_all('tr')
+                    for episode_node in episode_nodes:
+                        ep_node = episode_node.find('td', class_='beta')
+                        if not ep_node:
+                            continue
 
-                season = int(ep_match.group(1))
-                episode = int(ep_match.group(2))
-                if season != search_season or episode != search_episode:
-                    continue
+                        ep_match = ep_regexp.search(ep_node.get_text())
+                        if not ep_match:
+                            continue
 
-                details_node = row_node.find('a', class_='a_details')
-                if not details_node:
-                    continue
+                        season = int(ep_match.group(1))
+                        episode = int(ep_match.group(2))
 
-                details_url = details_node.get('href')
-                details_url = process_url(details_url, category_response.url)
+                        onclick = ep_node.get('onclick')
+                        goto_match = goto_regexp.search(onclick)
+                        if not goto_match:
+                            continue
 
+                        episode_link = goto_match.group(1)
+                        episode_link = process_url(episode_link, seasons_response.url)
+
+                        title = "{0} / s{1:02d}e{2:02d}".format(' / '.join(x for x in show.titles), season, episode)
+
+                        db_updated_episode = LostFilmDatabase.insert_episode(
+                            show.show_id, season, episode, title, episode_link, db_session)
+
+                        if season == search_season and episode == search_episode:
+                            db_episode = db_updated_episode
+
+            if db_episode:
                 entry = Entry()
-                entry['title'] = "{0} / s{1:02d}e{2:02d}".format(search_title, season, episode)
+                entry['title'] = db_episode.title
                 # entry['series_season'] = season
                 # entry['series_episode'] = episode
-                entry['url'] = details_url
+                entry['url'] = db_episode.url
                 # tds = link.parent.parent.parent.find_all('td')
                 # entry['torrent_seeds'] = int(tds[-2].contents[0])
                 # entry['torrent_leeches'] = int(tds[-1].contents[0])
