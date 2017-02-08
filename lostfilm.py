@@ -604,6 +604,12 @@ class LostFilmPlugin(object):
                 for season_node in season_nodes:
                     episode_nodes = season_node.find_all('tr')
                     for episode_node in episode_nodes:
+                        # TODO: parse release dates and store it into database
+                        # available = True
+                        # row_class = episode_node.get('class')
+                        # if row_class:
+                        #     available = row_class != 'not-available'
+
                         ep_node = episode_node.find('td', class_='beta')
                         if not ep_node:
                             continue
@@ -620,10 +626,24 @@ class LostFilmPlugin(object):
                         if not goto_match:
                             continue
 
+                        episode_title = None
+                        title_node = episode_node.find('td', class_='gamma')
+                        if title_node:
+                            episode_title = title_node.get_text()
+                            lines = episode_title.splitlines()
+                            episode_titles = set()
+                            for line in lines:
+                                line = line.strip(' \'"')
+                                if len(line) > 0:
+                                    episode_titles.add(line)
+                            episode_title = ' / '.join(x for x in episode_titles)
+
                         episode_link = goto_match.group(1)
                         episode_link = process_url(episode_link, seasons_response.url)
 
                         title = "{0} / s{1:02d}e{2:02d}".format(' / '.join(x for x in show.titles), season, episode)
+                        if episode_title and len(episode_title) > 0:
+                            title += ' / ' + episode_title
 
                         db_updated_episode = LostFilmDatabase.insert_episode(
                             show.show_id, season, episode, title, episode_link, db_session)
