@@ -604,11 +604,13 @@ class LostFilmPlugin(object):
                 for season_node in season_nodes:
                     episode_nodes = season_node.find_all('tr')
                     for episode_node in episode_nodes:
-                        # TODO: parse release dates and store it into database
-                        # available = True
-                        # row_class = episode_node.get('class')
-                        # if row_class:
-                        #     available = row_class != 'not-available'
+                        # Ignore unavailable episodes
+                        available = True
+                        row_class = episode_node.get('class')
+                        if row_class:
+                            available = row_class != 'not-available'
+                        if not available:
+                            continue
 
                         ep_node = episode_node.find('td', class_='beta')
                         if not ep_node:
