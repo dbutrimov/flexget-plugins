@@ -268,7 +268,7 @@ class LostFilmParser(object):
             log.error("Error while parsing episodes page: node <div class=`series-block`> are not found")
             return None
 
-        entries = set()
+        entries = []
 
         season_nodes = seasons_node.find_all('table', class_='movie-parts-list')
         for season_node in season_nodes:
@@ -309,16 +309,75 @@ class LostFilmParser(object):
 
                 episode_link = goto_match.group(1)
 
-                entry = Entry()
-                entry['available'] = available
-                entry['season'] = season
-                entry['episode'] = episode
-                entry['title'] = episode_title
-                entry['url'] = episode_link
+                entry = {
+                    'available': available,
+                    'season': season,
+                    'episode': episode,
+                    'title': episode_title,
+                    'url': episode_link
+                }
 
-                entries.add(entry)
+                entries.append(entry)
 
         return entries
+
+    @staticmethod
+    def parse_episode_page(html):
+        episode_tree = BeautifulSoup(html, 'html.parser')
+        overlay_node = episode_tree.find('div', class_='overlay-pane')
+        if not overlay_node:
+            reject_reason = "Error while parsing episode page: node <div class=`overlay-pane`> are not found"
+            log.error(reject_reason)
+            # entry.reject(reject_reason)
+            return None
+
+        button_node = overlay_node.find('div', class_='external-btn', onclick=PLAY_EPISODE_REGEXP)
+        if not button_node:
+            reject_reason = "Error while parsing episode page: node <div class=`external-btn`> are not found"
+            log.error(reject_reason)
+            # entry.reject(reject_reason)
+            return None
+
+        onclick_match = PLAY_EPISODE_REGEXP.search(button_node.get('onclick'))
+        if not onclick_match:
+            reject_reason = "Error while parsing episode page: " \
+                            "node <div class=`external-btn`> have invalid `onclick` attribute"
+            log.error(reject_reason)
+            # entry.reject(reject_reason)
+            return None
+        show_id = onclick_match.group(1)
+        season = onclick_match.group(2)
+        episode = onclick_match.group(3)
+        download_url = "http://lostfilm.tv/v_search.php?c={0}&s={1}&e={2}".format(show_id, season, episode)
+
+        return {
+            'show_id': show_id,
+            'season': season,
+            'episode': episode,
+            'download_url': download_url
+        }
+
+    @staticmethod
+    def parse_torrents_page(html):
+        torrents_tree = BeautifulSoup(html, 'html.parser')
+        torrents_list_node = torrents_tree.find('div', class_='inner-box--list')
+        if not torrents_list_node:
+            return None
+
+        result = []
+        item_nodes = torrents_list_node.find_all('div', class_='inner-box--item')
+        for item_node in item_nodes:
+            link_node = item_node.find('a')
+            if link_node:
+                torrent_link = link_node.get('href')
+                description_text = link_node.get_text()
+
+                result.append({
+                    'title': description_text,
+                    'url': torrent_link
+                })
+
+        return result
 
 
 class LostFilmDatabase(object):
@@ -514,34 +573,14 @@ class LostFilmPlugin(object):
 
         log.debug("Parsing episode page `{0}`...".format(episode_url))
 
-        episode_tree = BeautifulSoup(episode_html, 'html.parser')
-        overlay_node = episode_tree.find('div', class_='overlay-pane')
-        if not overlay_node:
-            reject_reason = "Error while parsing episode page: node <div class=`overlay-pane`> are not found"
-            log.error(reject_reason)
-            entry.reject(reject_reason)
+        episode_data = LostFilmParser.parse_episode_page(episode_html)
+        if not episode_data:
+            entry.reject('Error while parsing episode page')
             return False
 
-        button_node = overlay_node.find('div', class_='external-btn', onclick=PLAY_EPISODE_REGEXP)
-        if not button_node:
-            reject_reason = "Error while parsing episode page: node <div class=`external-btn`> are not found"
-            log.error(reject_reason)
-            entry.reject(reject_reason)
-            return False
+        torrents_url = episode_data['download_url']
 
-        onclick_match = PLAY_EPISODE_REGEXP.search(button_node.get('onclick'))
-        if not onclick_match:
-            reject_reason = "Error while parsing episode page: " \
-                            "node <div class=`external-btn`> have invalid `onclick` attribute"
-            log.error(reject_reason)
-            entry.reject(reject_reason)
-            return False
-        show_id = onclick_match.group(1)
-        season = onclick_match.group(2)
-        episode = onclick_match.group(3)
-        torrents_url = "http://lostfilm.tv/v_search.php?c={0}&s={1}&e={2}".format(show_id, season, episode)
-
-        log.debug(u"Downloading torrents page `{0}`...".format(torrents_url))
+        log.debug("Downloading torrents page `{0}`...".format(torrents_url))
 
         try:
             torrents_response = self.get_response(task, torrents_url)
@@ -559,23 +598,21 @@ class LostFilmPlugin(object):
 
         log.debug("Parsing torrent links...")
 
-        torrents_tree = BeautifulSoup(torrents_html, 'html.parser')
-        torrents_list_node = torrents_tree.find('div', class_='inner-box--list')
-        if torrents_list_node:
-            item_nodes = torrents_list_node.find_all('div', class_='inner-box--item')
-            for item_node in item_nodes:
-                link_node = item_node.find('a')
-                if link_node:
-                    torrent_link = link_node.get('href')
-                    description_text = link_node.get_text()
-                    if text_regexp.search(description_text):
-                        log.debug("Torrent link was accepted! [ regexp: `{0}`, description: `{1}` ]".format(
-                            text_pattern, description_text))
-                        entry['url'] = torrent_link
-                        return True
-                    else:
-                        log.debug("Torrent link was rejected: [ regexp: `{0}`, description: `{1}` ]".format(
-                            text_pattern, description_text))
+        parse_torrents = LostFilmParser.parse_torrents_page(torrents_html)
+        if not parse_torrents:
+            entry.reject('Error while parsing torrents page')
+            return False
+
+        for parse_torrent in parse_torrents:
+            torrent_title = parse_torrent['title']
+            if text_regexp.search(torrent_title):
+                log.debug("Torrent link was accepted! [ regexp: `{0}`, title: `{1}` ]".format(
+                    text_pattern, torrent_title))
+                entry['url'] = parse_torrent['url']
+                return True
+            else:
+                log.debug("Torrent link was rejected: [ regexp: `{0}`, title: `{1}` ]".format(
+                    text_pattern, torrent_title))
 
         reject_reason = "Torrent link was not detected with regexp `{0}`".format(text_pattern)
         log.error(reject_reason)
