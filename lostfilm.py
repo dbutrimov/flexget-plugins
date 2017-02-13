@@ -663,7 +663,7 @@ class LostFilmPlugin(object):
                 if not parse_result:
                     continue
 
-                for parse_entry in parse_result:
+                for key, parse_entry in enumerate(parse_result):
                     available = parse_entry['available']
                     if not available:
                         continue
