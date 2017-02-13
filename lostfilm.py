@@ -10,10 +10,12 @@ from time import sleep
 from urllib.parse import urljoin
 
 from bs4 import BeautifulSoup
+from flexget import options
 from flexget import plugin
 from flexget.db_schema import versioned_base
 from flexget.entry import Entry
 from flexget.event import event
+from flexget.terminal import console
 from flexget.manager import Session
 from flexget.plugin import PluginError
 from flexget.utils import requests
@@ -677,7 +679,29 @@ class LostFilmPlugin(object):
 # endregion
 
 
+def reset_cache(manager):
+    db_session = Session()
+    db_session.query(DbLostFilmEpisode).delete()
+    db_session.query(DbLostFilmShowAlternateName).delete()
+    db_session.query(DbLostFilmShow).delete()
+    # db_session.query(LostFilmAccount).delete()
+    db_session.commit()
+
+    console('The LostFilm cache has been reset')
+
+
+def do_cli(manager, options):
+    with manager.acquire_lock():
+        if options.lf_action == 'reset_cache':
+            reset_cache(manager)
+
+
 @event('plugin.register')
 def register_plugin():
+    # Register CLI commands
+    parser = options.register_command(PLUGIN_NAME, do_cli, help='Utilities to manage the LostFilm plugin')
+    subparsers = parser.add_subparsers(title='Actions', metavar='<action>', dest='lf_action')
+    subparsers.add_parser('reset_cache', help='Reset the LostFilm cache')
+
     plugin.register(LostFilmAuthPlugin, 'lostfilm_auth', api_ver=2)
     plugin.register(LostFilmPlugin, PLUGIN_NAME, groups=['urlrewriter', 'search'], api_ver=2)
