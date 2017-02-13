@@ -234,6 +234,10 @@ class LostFilmShow(object):
         self.url = url
 
 
+EP_REGEXP = re.compile(r"(\d+)\s+[Сс]езон\s+(\d+)\s+[Сс]ерия", flags=re.IGNORECASE)
+GOTO_REGEXP = re.compile(r'^goTo\([\'"](.*?)[\'"].*\)$', flags=re.IGNORECASE)
+
+
 class LostFilmParser(object):
     @staticmethod
     def parse_shows_page(html):
@@ -254,6 +258,67 @@ class LostFilmParser(object):
             return shows
 
         return None
+
+    @staticmethod
+    def parse_episodes_page(html):
+
+        category_tree = BeautifulSoup(html, 'html.parser')
+        seasons_node = category_tree.find('div', class_='series-block')
+        if not seasons_node:
+            log.error("Error while parsing episodes page: node <div class=`series-block`> are not found")
+            return None
+
+        entries = set()
+
+        season_nodes = seasons_node.find_all('table', class_='movie-parts-list')
+        for season_node in season_nodes:
+            episode_nodes = season_node.find_all('tr')
+            for episode_node in episode_nodes:
+                available = True
+                row_class = episode_node.get('class')
+                if row_class:
+                    available = 'not-available' not in row_class
+
+                ep_node = episode_node.find('td', class_='beta')
+                if not ep_node:
+                    continue
+
+                ep_match = EP_REGEXP.search(ep_node.get_text())
+                if not ep_match:
+                    continue
+
+                season = int(ep_match.group(1))
+                episode = int(ep_match.group(2))
+
+                onclick = ep_node.get('onclick')
+                goto_match = GOTO_REGEXP.search(onclick)
+                if not goto_match:
+                    continue
+
+                episode_title = None
+                title_node = episode_node.find('td', class_='gamma')
+                if title_node:
+                    episode_title = title_node.get_text()
+                    lines = episode_title.splitlines()
+                    episode_titles = set()
+                    for line in lines:
+                        line = line.strip(' \t\r\n')
+                        if len(line) > 0:
+                            episode_titles.add(line)
+                    episode_title = ' / '.join(x for x in episode_titles)
+
+                episode_link = goto_match.group(1)
+
+                entry = Entry()
+                entry['available'] = available
+                entry['season'] = season
+                entry['episode'] = episode
+                entry['title'] = episode_title
+                entry['url'] = episode_link
+
+                entries.add(entry)
+
+        return entries
 
 
 class LostFilmDatabase(object):
@@ -373,6 +438,8 @@ PLAY_EPISODE_REGEXP = re.compile(
     flags=re.IGNORECASE)
 
 REPLACE_LOCATION_REGEXP = re.compile(r'location\.replace\([\'"](.+?)[\'"]\);', flags=re.IGNORECASE)
+
+SEARCH_REGEXP = re.compile(r'^(.*?)\s*s(\d+?)e(\d+?)$', flags=re.IGNORECASE)
 
 
 class LostFilmPlugin(object):
@@ -565,12 +632,8 @@ class LostFilmPlugin(object):
 
         db_session = Session()
 
-        ep_regexp = re.compile(r"(\d+)\s+[Сс]езон\s+(\d+)\s+[Сс]ерия", flags=re.IGNORECASE)
-        goto_regexp = re.compile(r'^goTo\([\'"](.*?)[\'"].*\)$', flags=re.IGNORECASE)
-        search_regexp = re.compile(r'^(.*?)\s*s(\d+?)e(\d+?)$', flags=re.IGNORECASE)
-
         for search_string in entry.get('search_strings', [entry['title']]):
-            search_match = search_regexp.search(search_string)
+            search_match = SEARCH_REGEXP.search(search_string)
             if not search_match:
                 continue
 
@@ -596,64 +659,30 @@ class LostFilmPlugin(object):
                 seasons_html = seasons_response.content
                 sleep(3)
 
-                category_tree = BeautifulSoup(seasons_html, 'html.parser')
-                seasons_node = category_tree.find('div', class_='series-block')
-                if not seasons_node:
-                    log.error("Error while parsing episodes page: node <div class=`series-block`> are not found")
+                parse_result = LostFilmParser.parse_episodes_page(seasons_html)
+                if not parse_result:
                     continue
 
-                season_nodes = seasons_node.find_all('table', class_='movie-parts-list')
-                for season_node in season_nodes:
-                    episode_nodes = season_node.find_all('tr')
-                    for episode_node in episode_nodes:
-                        # Ignore unavailable episodes
-                        available = True
-                        row_class = episode_node.get('class')
-                        if row_class:
-                            available = row_class != 'not-available'
-                        if not available:
-                            continue
+                for parse_entry in parse_result:
+                    available = parse_entry['available']
+                    if not available:
+                        continue
 
-                        ep_node = episode_node.find('td', class_='beta')
-                        if not ep_node:
-                            continue
+                    season = parse_entry['season']
+                    episode = parse_entry['episode']
 
-                        ep_match = ep_regexp.search(ep_node.get_text())
-                        if not ep_match:
-                            continue
+                    title = "{0} / s{1:02d}e{2:02d}".format(' / '.join(x for x in show.titles), season, episode)
+                    episode_title = parse_result['title']
+                    if episode_title and len(episode_title) > 0:
+                        title += ' / ' + episode_title
 
-                        season = int(ep_match.group(1))
-                        episode = int(ep_match.group(2))
+                    url = parse_entry['url']
+                    url = process_url(url, seasons_response.url)
+                    db_updated_episode = LostFilmDatabase.insert_episode(
+                        show.show_id, season, episode, title, url, db_session)
 
-                        onclick = ep_node.get('onclick')
-                        goto_match = goto_regexp.search(onclick)
-                        if not goto_match:
-                            continue
-
-                        episode_title = None
-                        title_node = episode_node.find('td', class_='gamma')
-                        if title_node:
-                            episode_title = title_node.get_text()
-                            lines = episode_title.splitlines()
-                            episode_titles = set()
-                            for line in lines:
-                                line = line.strip(' \'"')
-                                if len(line) > 0:
-                                    episode_titles.add(line)
-                            episode_title = ' / '.join(x for x in episode_titles)
-
-                        episode_link = goto_match.group(1)
-                        episode_link = process_url(episode_link, seasons_response.url)
-
-                        title = "{0} / s{1:02d}e{2:02d}".format(' / '.join(x for x in show.titles), season, episode)
-                        if episode_title and len(episode_title) > 0:
-                            title += ' / ' + episode_title
-
-                        db_updated_episode = LostFilmDatabase.insert_episode(
-                            show.show_id, season, episode, title, episode_link, db_session)
-
-                        if season == search_season and episode == search_episode:
-                            db_episode = db_updated_episode
+                    if season == search_season and episode == search_episode:
+                        db_episode = db_updated_episode
 
             if db_episode:
                 entry = Entry()
