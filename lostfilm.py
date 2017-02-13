@@ -663,7 +663,7 @@ class LostFilmPlugin(object):
                 if not parse_result:
                     continue
 
-                for key, parse_entry in enumerate(parse_result):
+                for parse_entry in parse_result:
                     available = parse_entry['available']
                     if not available:
                         continue
@@ -672,7 +672,7 @@ class LostFilmPlugin(object):
                     episode = parse_entry['episode']
 
                     title = "{0} / s{1:02d}e{2:02d}".format(' / '.join(x for x in show.titles), season, episode)
-                    episode_title = parse_result['title']
+                    episode_title = parse_entry['title']
                     if episode_title and len(episode_title) > 0:
                         title += ' / ' + episode_title
 
