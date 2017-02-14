@@ -614,7 +614,8 @@ class LostFilmPlugin(object):
                 log.debug("Torrent link was rejected: [ regexp: `{0}`, title: `{1}` ]".format(
                     text_pattern, torrent_title))
 
-        reject_reason = "Torrent link was not detected with regexp `{0}`".format(text_pattern)
+        reject_reason = "Torrent link was not detected by `{0}` with regexp `{1}`: {2}".format(
+            torrents_response.url, text_pattern, parse_torrents)
         log.error(reject_reason)
         entry.reject(reject_reason)
         return False
