@@ -87,9 +87,11 @@ class LostFilmAccount(Base):
 
 
 class LostFilmAuth(AuthBase):
-    """Supports downloading of torrents from 'lostfilm' tracker
-           if you pass cookies (CookieJar) to constructor then authentication will be bypassed and cookies will be just set
-        """
+    """
+    Supports downloading of torrents from 'lostfilm' tracker
+    if you pass cookies (CookieJar) to constructor then authentication will be bypassed
+    and cookies will be just set
+    """
 
     def try_authenticate(self, payload):
         for _ in range(5):
@@ -265,8 +267,7 @@ class LostFilmParser(object):
         category_tree = BeautifulSoup(html, 'html.parser')
         seasons_node = category_tree.find('div', class_='series-block')
         if not seasons_node:
-            log.error("Error while parsing episodes page: node <div class=`series-block`> are not found")
-            return None
+            raise Exception('Node <div class=`series-block`> are not found')
 
         entries = []
 
@@ -326,25 +327,16 @@ class LostFilmParser(object):
         episode_tree = BeautifulSoup(html, 'html.parser')
         overlay_node = episode_tree.find('div', class_='overlay-pane')
         if not overlay_node:
-            reject_reason = "Error while parsing episode page: node <div class=`overlay-pane`> are not found"
-            log.error(reject_reason)
-            # entry.reject(reject_reason)
-            return None
+            raise Exception('Node <div class=`overlay-pane`> are not found')
 
         button_node = overlay_node.find('div', class_='external-btn', onclick=PLAY_EPISODE_REGEXP)
         if not button_node:
-            reject_reason = "Error while parsing episode page: node <div class=`external-btn`> are not found"
-            log.error(reject_reason)
-            # entry.reject(reject_reason)
-            return None
+            raise Exception('Node <div class=`external-btn`> are not found')
 
         onclick_match = PLAY_EPISODE_REGEXP.search(button_node.get('onclick'))
         if not onclick_match:
-            reject_reason = "Error while parsing episode page: " \
-                            "node <div class=`external-btn`> have invalid `onclick` attribute"
-            log.error(reject_reason)
-            # entry.reject(reject_reason)
-            return None
+            raise Exception('Node <div class=`external-btn`> have invalid `onclick` attribute')
+
         show_id = onclick_match.group(1)
         season = onclick_match.group(2)
         episode = onclick_match.group(3)
@@ -362,7 +354,7 @@ class LostFilmParser(object):
         torrents_tree = BeautifulSoup(html, 'html.parser')
         torrents_list_node = torrents_tree.find('div', class_='inner-box--list')
         if not torrents_list_node:
-            return None
+            raise Exception('Node <div class=`inner-box--list`> are not found')
 
         result = []
         item_nodes = torrents_list_node.find_all('div', class_='inner-box--item')
@@ -491,7 +483,9 @@ class LostFilmDatabase(object):
         return db_episode
 
 
-EPISODE_URL_REGEXP = re.compile(r'^https?://(?:www\.)?lostfilm\.tv/series/([^/]+?)/season_(\d+)/episode_(\d+).*$', flags=re.IGNORECASE)
+EPISODE_URL_REGEXP = re.compile(
+    r'^https?://(?:www\.)?lostfilm\.tv/series/([^/]+?)/season_(\d+)/episode_(\d+).*$',
+    flags=re.IGNORECASE)
 PLAY_EPISODE_REGEXP = re.compile(
     r'PlayEpisode\(\\?[\'"](.+?)\\?[\'"],\s*\\?[\'"](.+?)\\?[\'"],\s*\\?[\'"](.+?)\\?[\'"]\)',
     flags=re.IGNORECASE)
@@ -563,7 +557,7 @@ class LostFilmPlugin(object):
         try:
             episode_response = task.requests.get(episode_url)
         except requests.RequestException as e:
-            reject_reason = "Error while fetching page: {0}".format(e)
+            reject_reason = "Error while fetching page `{0}`: {1}".format(episode_url, e)
             log.error(reject_reason)
             entry.reject(reject_reason)
             sleep(3)
@@ -573,9 +567,12 @@ class LostFilmPlugin(object):
 
         log.debug("Parsing episode page `{0}`...".format(episode_url))
 
-        episode_data = LostFilmParser.parse_episode_page(episode_html)
-        if not episode_data:
-            entry.reject('Error while parsing episode page')
+        try:
+            episode_data = LostFilmParser.parse_episode_page(episode_html)
+        except Exception as e:
+            reject_reason = "Error while parsing episode page `{0}`: {1}".format(episode_url, e)
+            log.error(reject_reason)
+            entry.reject(reject_reason)
             return False
 
         torrents_url = episode_data['download_url']
@@ -585,7 +582,7 @@ class LostFilmPlugin(object):
         try:
             torrents_response = self.get_response(task, torrents_url)
         except requests.RequestException as e:
-            reject_reason = "Error while fetching page: {0}".format(e)
+            reject_reason = "Error while fetching page `{0}`: {1}".format(torrents_url, e)
             log.error(reject_reason)
             entry.reject(reject_reason)
             sleep(3)
@@ -598,9 +595,12 @@ class LostFilmPlugin(object):
 
         log.debug("Parsing torrent links...")
 
-        parse_torrents = LostFilmParser.parse_torrents_page(torrents_html)
-        if not parse_torrents:
-            entry.reject('Error while parsing torrents page')
+        try:
+            parse_torrents = LostFilmParser.parse_torrents_page(torrents_html)
+        except Exception as e:
+            reject_reason = "Error while parsing torrents page `{0}`: {1}".format(torrents_response.url, e)
+            log.error(reject_reason)
+            entry.reject(reject_reason)
             return False
 
         for parse_torrent in parse_torrents:
@@ -633,14 +633,22 @@ class LostFilmPlugin(object):
                 't': 0  # all shows
             }
 
-            response = LostFilmApi.requests_post(task.requests, payload)
-            parsed_shows = LostFilmParser.parse_shows_page(response.text)
             count = 0
-            if parsed_shows:
-                count = len(parsed_shows)
-                for show in parsed_shows:
-                    show.url = process_url(show.url, response.url)
-                    shows.add(show)
+            try:
+                response = LostFilmApi.requests_post(task.requests, payload)
+            except Exception as e:
+                log.error("Error while fetching shows page: {0}".format(e))
+            else:
+                try:
+                    parsed_shows = LostFilmParser.parse_shows_page(response.text)
+                except Exception as e:
+                    log.error("Error while parsing shows page `{0}`: {1}".format(response.url, e))
+                else:
+                    if parsed_shows:
+                        count = len(parsed_shows)
+                        for show in parsed_shows:
+                            show.url = process_url(show.url, response.url)
+                            shows.add(show)
 
             total += count
             if count < step:
@@ -696,8 +704,10 @@ class LostFilmPlugin(object):
                 seasons_html = seasons_response.content
                 sleep(3)
 
-                parse_result = LostFilmParser.parse_episodes_page(seasons_html)
-                if not parse_result:
+                try:
+                    parse_result = LostFilmParser.parse_episodes_page(seasons_html)
+                except Exception as e:
+                    log.error("Error while parsing episodes page `{0}`: {1}".format(seasons_response.url, e))
                     continue
 
                 for parse_entry in parse_result:
@@ -756,9 +766,9 @@ def reset_cache(manager):
     console('The LostFilm cache has been reset')
 
 
-def do_cli(manager, options):
+def do_cli(manager, options_):
     with manager.acquire_lock():
-        if options.lf_action == 'reset_cache':
+        if options_.lf_action == 'reset_cache':
             reset_cache(manager)
 
 
