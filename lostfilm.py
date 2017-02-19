@@ -688,9 +688,9 @@ class LostFilmPlugin(object):
             if not show:
                 continue
 
-            db_episode = LostFilmDatabase.find_episode(show.show_id, search_season, search_episode, db_session)
+            db_episode = LostFilmDatabase.find_episode(show['show_id'], search_season, search_episode, db_session)
             if not db_episode:
-                seasons_url = urljoin(show.url + '/', 'seasons')
+                seasons_url = urljoin(show['url'] + '/', 'seasons')
                 try:
                     seasons_response = task.requests.get(seasons_url)
                 except requests.RequestException as e:
@@ -714,7 +714,7 @@ class LostFilmPlugin(object):
                     season = parse_entry['season']
                     episode = parse_entry['episode']
 
-                    title = "{0} / s{1:02d}e{2:02d}".format(' / '.join(x for x in show.titles), season, episode)
+                    title = "{0} / s{1:02d}e{2:02d}".format(' / '.join(x for x in show['titles']), season, episode)
                     episode_title = parse_entry['title']
                     if episode_title and len(episode_title) > 0:
                         title += ' / ' + episode_title
@@ -722,7 +722,7 @@ class LostFilmPlugin(object):
                     url = parse_entry['url']
                     url = process_url(url, seasons_response.url)
                     db_updated_episode = LostFilmDatabase.insert_episode(
-                        show.show_id, season, episode, title, url, db_session)
+                        show['show_id'], season, episode, title, url, db_session)
 
                     if season == search_season and episode == search_episode:
                         db_episode = db_updated_episode
