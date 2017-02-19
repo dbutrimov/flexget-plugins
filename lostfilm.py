@@ -229,13 +229,6 @@ class DbLostFilmEpisode(Base):
     __table_args__ = (UniqueConstraint('show_id', 'season', 'episode', name='_show_episode_uc'),)
 
 
-class LostFilmShow(object):
-    def __init__(self, show_id, titles, url):
-        self.show_id = show_id
-        self.titles = titles
-        self.url = url
-
-
 EP_REGEXP = re.compile(r"(\d+)\s+[Сс]езон\s+(\d+)\s+[Сс]ерия", flags=re.IGNORECASE)
 GOTO_REGEXP = re.compile(r'^goTo\([\'"](.*?)[\'"].*\)$', flags=re.IGNORECASE)
 
@@ -245,16 +238,14 @@ class LostFilmParser(object):
     def parse_shows_page(html):
         shows_json = json.loads(html)
         if 'result' in shows_json and shows_json['result'] == 'ok':
-            shows = set()
+            shows = list()
             shows_data = shows_json['data']
             for item in shows_data:
-                show_id = int(item['id'])
-                title = item['title']
-                origin_title = item['title_orig']
-                show_url = item['link']
-
-                show = LostFilmShow(show_id=show_id, titles=[title, origin_title], url=show_url)
-                shows.add(show)
+                shows.append({
+                    'show_id': int(item['id']),
+                    'titles': [item['title'], item['title_orig']],
+                    'url': item['link']
+                })
 
             log.debug("{0:d} show(s) are found".format(len(shows)))
             return shows
@@ -269,7 +260,7 @@ class LostFilmParser(object):
         if not seasons_node:
             raise Exception('Node <div class=`series-block`> are not found')
 
-        entries = []
+        entries = list()
 
         season_nodes = seasons_node.find_all('table', class_='movie-parts-list')
         for season_node in season_nodes:
@@ -310,15 +301,13 @@ class LostFilmParser(object):
 
                 episode_link = goto_match.group(1)
 
-                entry = {
+                entries.append({
                     'available': available,
                     'season': season,
                     'episode': episode,
                     'title': episode_title,
                     'url': episode_link
-                }
-
-                entries.append(entry)
+                })
 
         return entries
 
@@ -356,7 +345,7 @@ class LostFilmParser(object):
         if not torrents_list_node:
             raise Exception('Node <div class=`inner-box--list`> are not found')
 
-        result = []
+        result = list()
         item_nodes = torrents_list_node.find_all('div', class_='inner-box--item')
         for item_node in item_nodes:
             link_node = item_node.find('a')
@@ -397,18 +386,18 @@ class LostFilmDatabase(object):
         if shows and len(shows) > 0:
             now = datetime.now()
             for show in shows:
-                db_show = DbLostFilmShow(id=show.show_id, title=show.titles[0], url=show.url, updated_at=now)
+                db_show = DbLostFilmShow(id=show['show_id'], title=show['titles'][0], url=show['url'], updated_at=now)
                 db_session.add(db_show)
 
-                for index, item in enumerate(show.titles[1:], start=1):
-                    alternate_name = DbLostFilmShowAlternateName(show_id=show.show_id, title=item)
+                for index, item in enumerate(show['titles'][1:], start=1):
+                    alternate_name = DbLostFilmShowAlternateName(show_id=show['show_id'], title=item)
                     db_session.add(alternate_name)
 
             db_session.commit()
 
     @staticmethod
     def get_shows(db_session):
-        shows = set()
+        shows = list()
 
         db_shows = db_session.query(DbLostFilmShow).all()
         for db_show in db_shows:
@@ -421,8 +410,11 @@ class LostFilmDatabase(object):
                 for db_alternate_name in db_alternate_names:
                     titles.append(db_alternate_name.title)
 
-            show = LostFilmShow(show_id=db_show.id, titles=titles, url=db_show.url)
-            shows.add(show)
+            shows.append({
+                'show_id': db_show.id,
+                'titles': titles,
+                'url': db_show.url
+            })
 
         return shows
 
@@ -439,8 +431,11 @@ class LostFilmDatabase(object):
                 for db_alternate_name in db_alternate_names:
                     titles.append(db_alternate_name.title)
 
-            show = LostFilmShow(show_id=db_show.id, titles=titles, url=db_show.url)
-            return show
+            return {
+                'show_id': db_show.id,
+                'titles': titles,
+                'url': db_show.url
+            }
 
         return None
 
