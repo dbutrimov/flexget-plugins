@@ -10,10 +10,12 @@ from time import sleep
 from urllib.parse import urljoin
 
 from bs4 import BeautifulSoup
+from flexget import options
 from flexget import plugin
 from flexget.db_schema import versioned_base
 from flexget.entry import Entry
 from flexget.event import event
+from flexget.terminal import console
 from flexget.manager import Session
 from flexget.plugin import PluginError
 from flexget.utils import requests
@@ -166,6 +168,8 @@ EPISODE_TITLE_REGEXP = re.compile(
     r'^([^/]*?)\s*/\s*([^/]*?)\s*/\s*s(\d+)e(\d+)(?:-(\d+))?\s*/\s*([^/]*?)\s*(?:(?:/.*)|$)',
     flags=re.IGNORECASE)
 
+EPISODE_LINK_REGEXP = re.compile(r'details.php\?id=(\d+)', flags=re.IGNORECASE)
+
 
 class DbBaibakoShow(Base):
     __tablename__ = 'baibako_shows'
@@ -183,11 +187,16 @@ class DbBaibakoShowAlternateName(Base):
     __table_args__ = (UniqueConstraint('show_id', 'title', name='_show_title_uc'),)
 
 
-class BaibakoShow(object):
-    def __init__(self, show_id, titles, url):
-        self.show_id = show_id
-        self.titles = titles
-        self.url = url
+class DbBaibakoEpisode(Base):
+    __tablename__ = 'baibako_episode'
+    id = Column(Integer, primary_key=True, autoincrement=True, nullable=False)
+    show_id = Column(Integer, nullable=False)
+    season = Column(Integer, nullable=False)
+    episode = Column(Integer, nullable=False)
+    title = Column(Unicode, nullable=False)
+    url = Column(Unicode, nullable=False)
+    timestamp = Column(DateTime, nullable=False)
+    __table_args__ = (UniqueConstraint('show_id', 'season', 'episode', name='_show_episode_uc'),)
 
 
 class BaibakoParser(object):
@@ -196,30 +205,75 @@ class BaibakoParser(object):
         serials_tree = BeautifulSoup(html, 'html.parser')
         serials_node = serials_tree.find('table', class_=TABLE_CLASS_REGEXP)
         if not serials_node:
-            log.error('Error while parsing serials page: node <table class=`table.*`> are not found')
-            return None
+            raise Exception('Node <table class=`table.*`> are not found')
 
-        shows = set()
+        shows = []
 
         url_regexp = re.compile(r'id=(\d+)', flags=re.IGNORECASE)
         link_nodes = serials_node.find_all('a')
         for link_node in link_nodes:
             serial_link = link_node.get('href')
-            # serial_link = process_url(serial_link, default_scheme=url_scheme, default_host=url_host)
-
             url_match = url_regexp.search(serial_link)
             if not url_match:
                 continue
 
             show_id = int(url_match.group(1))
-
             serial_title = link_node.text
 
-            show = BaibakoShow(show_id=show_id, titles=[serial_title], url=serial_link)
-            shows.add(show)
+            shows.append({
+                'show_id': show_id,
+                'titles': [serial_title],
+                'url': serial_link
+            })
 
         log.debug("{0:d} show(s) are found".format(len(shows)))
         return shows
+
+    @staticmethod
+    def parse_episodes_page(html):
+        serial_tree = BeautifulSoup(html, 'html.parser')
+        serial_table_node = serial_tree.find('table', class_=TABLE_CLASS_REGEXP)
+        if not serial_table_node:
+            raise Exception('Node <table class=`table.*`> are not found')
+
+        entries = list()
+
+        link_nodes = serial_table_node.find_all('a', href=EPISODE_LINK_REGEXP)
+        for link_node in link_nodes:
+            link_title = link_node.text
+            episode_title_match = EPISODE_TITLE_REGEXP.search(link_title)
+            if not episode_title_match:
+                log.warning("Error while parsing serial page: title `{0}` are not matched".format(link_title))
+                continue
+
+            season = int(episode_title_match.group(3))
+            first_episode = int(episode_title_match.group(4))
+            last_episode = first_episode
+            last_episode_group = episode_title_match.group(5)
+            if last_episode_group:
+                last_episode = int(last_episode_group)
+
+            ru_title = episode_title_match.group(1)
+            title = episode_title_match.group(2)
+            quality = episode_title_match.group(6)
+
+            if last_episode > first_episode:
+                episode_id = 's{0:02d}e{1:02d}-{2:02d}'.format(season, first_episode, last_episode)
+            else:
+                episode_id = 's{0:02d}e{1:02d}'.format(season, first_episode)
+
+            entry_title = "{0} / {1} / {2} / {3}".format(title, ru_title, episode_id, quality)
+            entry_url = link_node.get('href')
+
+            entries.append({
+                'season': season,
+                'episode': first_episode,
+                'ep': episode_id,
+                'title': entry_title,
+                'url': entry_url
+            })
+
+        return entries
 
 
 class BaibakoDatabase(object):
@@ -247,18 +301,18 @@ class BaibakoDatabase(object):
         if shows and len(shows) > 0:
             now = datetime.now()
             for show in shows:
-                db_show = DbBaibakoShow(id=show.show_id, title=show.titles[0], url=show.url, updated_at=now)
+                db_show = DbBaibakoShow(id=show['show_id'], title=show['titles'][0], url=show['url'], updated_at=now)
                 db_session.add(db_show)
 
-                for index, item in enumerate(show.titles[1:], start=1):
-                    alternate_name = DbBaibakoShowAlternateName(show_id=show.show_id, title=item)
+                for index, item in enumerate(show['titles'][1:], start=1):
+                    alternate_name = DbBaibakoShowAlternateName(show_id=show['show_id'], title=item)
                     db_session.add(alternate_name)
 
             db_session.commit()
 
     @staticmethod
     def get_shows(db_session):
-        shows = set()
+        shows = list()
 
         db_shows = db_session.query(DbBaibakoShow).all()
         for db_show in db_shows:
@@ -271,8 +325,11 @@ class BaibakoDatabase(object):
                 for db_alternate_name in db_alternate_names:
                     titles.append(db_alternate_name.title)
 
-            show = BaibakoShow(show_id=db_show.id, titles=titles, url=db_show.url)
-            shows.add(show)
+            shows.append({
+                'show_id': db_show.id,
+                'titles': titles,
+                'url': db_show.url
+            })
 
         return shows
 
@@ -289,8 +346,11 @@ class BaibakoDatabase(object):
                 for db_alternate_name in db_alternate_names:
                     titles.append(db_alternate_name.title)
 
-            show = BaibakoShow(show_id=db_show.id, titles=titles, url=db_show.url)
-            return show
+            return {
+                'show_id': db_show.id,
+                'titles': titles,
+                'url': db_show.url
+            }
 
         return None
 
@@ -306,6 +366,31 @@ class BaibakoDatabase(object):
             return BaibakoDatabase.get_show_by_id(db_alternate_name.show_id, db_session)
 
         return None
+
+    @staticmethod
+    def find_episode(show_id, season, episode, db_session):
+        return db_session.query(DbBaibakoEpisode).filter(
+            DbBaibakoEpisode.show_id == show_id,
+            DbBaibakoEpisode.season == season,
+            DbBaibakoEpisode.episode == episode).first()
+
+    @staticmethod
+    def insert_episode(show_id, season, episode, title, url, db_session):
+        db_episode = BaibakoDatabase.find_episode(show_id, season, episode, db_session)
+        now = datetime.now()
+        if not db_episode:
+            db_episode = DbBaibakoEpisode(
+                show_id=show_id,
+                season=season,
+                episode=episode)
+        db_episode.title = title
+        db_episode.url = url
+        db_episode.timestamp = now
+
+        db_session.add(db_episode)
+        db_session.commit()
+
+        return db_episode
 
 
 class BaibakoPlugin(object):
@@ -368,7 +453,7 @@ class BaibakoPlugin(object):
         shows = BaibakoParser.parse_shows_page(serials_html)
         if shows:
             for show in shows:
-                show.url = process_url(show.url, serials_response.url)
+                show['url'] = process_url(show['url'], serials_response.url)
 
         return shows
 
@@ -396,7 +481,6 @@ class BaibakoPlugin(object):
         serial_tab = config.get('serial_tab', 'all')
 
         search_string_regexp = re.compile(r'^(.*?)\s*s(\d+)e(\d+)$', flags=re.IGNORECASE)
-        episode_link_regexp = re.compile(r'details.php\?id=(\d+)', flags=re.IGNORECASE)
 
         for search_string in entry.get('search_strings', [entry['title']]):
             search_match = search_string_regexp.search(search_string)
@@ -413,57 +497,42 @@ class BaibakoPlugin(object):
             if not show:
                 continue
 
-            serial_url = show.url + '&tab=' + serial_tab
-            try:
-                serial_response = task.requests.get(serial_url)
-            except requests.RequestException as e:
-                log.error("Error while fetching page: {0}".format(e))
+            db_episode = BaibakoDatabase.find_episode(show['show_id'], search_season, search_episode, db_session)
+            if not db_episode:
+                serial_url = show['url'] + '&tab=' + serial_tab
+                try:
+                    serial_response = task.requests.get(serial_url)
+                except requests.RequestException as e:
+                    log.error("Error while fetching page: {0}".format(e))
+                    sleep(3)
+                    continue
+                serial_html = serial_response.text
                 sleep(3)
-                continue
-            serial_html = serial_response.text
-            sleep(3)
 
-            serial_tree = BeautifulSoup(serial_html, 'html.parser')
-            serial_table_node = serial_tree.find('table', class_=TABLE_CLASS_REGEXP)
-            if not serial_table_node:
-                log.error('Error while parsing serial page: node <table class=`table.*`> are not found')
-                continue
-
-            link_nodes = serial_table_node.find_all('a', href=episode_link_regexp)
-            for link_node in link_nodes:
-                link_title = link_node.text
-                episode_title_match = EPISODE_TITLE_REGEXP.search(link_title)
-                if not episode_title_match:
-                    log.verbose("Error while parsing serial page: title `{0}` are not matched".format(link_title))
+                try:
+                    parsed_episodes = BaibakoParser.parse_episodes_page(serial_html)
+                except Exception as e:
+                    log.error("Error while parsing episodes page: {0}".format(e))
                     continue
 
-                season = int(episode_title_match.group(3))
-                first_episode = int(episode_title_match.group(4))
-                last_episode = first_episode
-                last_episode_group = episode_title_match.group(5)
-                if last_episode_group:
-                    last_episode = int(last_episode_group)
+                for parsed_episode in parsed_episodes:
+                    season = parsed_episode['season']
+                    episode = parsed_episode['episode']
 
-                if season != search_season or (first_episode > search_episode or last_episode < search_episode):
-                    continue
+                    url = parsed_episode['url']
+                    url = process_url(url, serial_response.url)
 
-                ru_title = episode_title_match.group(1)
-                title = episode_title_match.group(2)
-                quality = episode_title_match.group(6)
+                    db_updated_episode = BaibakoDatabase.insert_episode(
+                        show['show_id'], season, episode, parsed_episode['title'], url, db_session)
 
-                if last_episode > first_episode:
-                    episode_id = 's{0:02d}e{1:02d}-{2:02d}'.format(season, first_episode, last_episode)
-                else:
-                    episode_id = 's{0:02d}e{1:02d}'.format(season, first_episode)
+                    if season == search_season and episode == search_episode:
+                        # (first_episode > search_episode or last_episode < search_episode):
+                        db_episode = db_updated_episode
 
-                entry_title = "{0} / {1} / {2} / {3}".format(title, ru_title, episode_id, quality)
-                entry_url = link_node.get('href')
-                entry_url = process_url(entry_url, serial_response.url)
-
+            if db_episode:
                 entry = Entry()
-                entry['title'] = entry_title
-                entry['url'] = entry_url
-
+                entry['title'] = db_episode.title
+                entry['url'] = db_episode.url
                 entries.add(entry)
 
         return entries
@@ -472,7 +541,29 @@ class BaibakoPlugin(object):
 # endregion
 
 
+def reset_cache(manager):
+    db_session = Session()
+    db_session.query(DbBaibakoEpisode).delete()
+    db_session.query(DbBaibakoShowAlternateName).delete()
+    db_session.query(DbBaibakoShow).delete()
+    # db_session.query(LostFilmAccount).delete()
+    db_session.commit()
+
+    console('The BaibaKo cache has been reset')
+
+
+def do_cli(manager, options_):
+    with manager.acquire_lock():
+        if options_.lf_action == 'reset_cache':
+            reset_cache(manager)
+
+
 @event('plugin.register')
 def register_plugin():
+    # Register CLI commands
+    parser = options.register_command(PLUGIN_NAME, do_cli, help='Utilities to manage the BaibaKo plugin')
+    subparsers = parser.add_subparsers(title='Actions', metavar='<action>', dest='lf_action')
+    subparsers.add_parser('reset_cache', help='Reset the BaibaKo cache')
+
     plugin.register(BaibakoAuthPlugin, 'baibako_auth', api_ver=2)
     plugin.register(BaibakoPlugin, PLUGIN_NAME, groups=['urlrewriter', 'search'], api_ver=2)
