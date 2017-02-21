@@ -292,11 +292,11 @@ class LostFilmParser(object):
                 if title_node:
                     episode_title = title_node.get_text()
                     lines = episode_title.splitlines()
-                    episode_titles = set()
+                    episode_titles = list()
                     for line in lines:
                         line = line.strip(' \t\r\n')
                         if len(line) > 0:
-                            episode_titles.add(line)
+                            episode_titles.append(line)
                     episode_title = ' / '.join(x for x in episode_titles)
 
                 episode_link = goto_match.group(1)
@@ -619,7 +619,7 @@ class LostFilmPlugin(object):
         step = 10
         total = 0
 
-        shows = set()
+        shows = list()
         while True:
             payload = {
                 'act': 'serial',
@@ -643,8 +643,8 @@ class LostFilmPlugin(object):
                     if parsed_shows:
                         count = len(parsed_shows)
                         for show in parsed_shows:
-                            show.url = process_url(show.url, response.url)
-                            shows.add(show)
+                            show['url'] = process_url(show['url'], response.url)
+                            shows.append(show)
 
             total += count
             if count < step:
@@ -690,7 +690,7 @@ class LostFilmPlugin(object):
 
             db_episode = LostFilmDatabase.find_episode(show['show_id'], search_season, search_episode, db_session)
             if not db_episode:
-                seasons_url = urljoin(show['url'] + '/', 'seasons')
+                seasons_url = urljoin('{0}/'.format(show['url']), 'seasons')
                 try:
                     seasons_response = task.requests.get(seasons_url)
                 except requests.RequestException as e:
