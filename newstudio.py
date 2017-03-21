@@ -485,5 +485,5 @@ class NewStudioPlugin(object):
 
 @event('plugin.register')
 def register_plugin():
-    plugin.register(NewStudioAuthPlugin, 'newstudio_auth', api_ver=2)
+    plugin.register(NewStudioAuthPlugin, PLUGIN_NAME + '_auth', api_ver=2)
     plugin.register(NewStudioPlugin, PLUGIN_NAME, groups=['urlrewriter', 'search'], api_ver=2)

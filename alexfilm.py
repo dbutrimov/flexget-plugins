@@ -466,5 +466,5 @@ class AlexFilmPlugin(object):
 
 @event('plugin.register')
 def register_plugin():
-    plugin.register(AlexFilmAuthPlugin, 'alexfilm_auth', api_ver=2)
+    plugin.register(AlexFilmAuthPlugin, PLUGIN_NAME + '_auth', api_ver=2)
     plugin.register(AlexFilmPlugin, PLUGIN_NAME, groups=['urlrewriter', 'search'], api_ver=2)
