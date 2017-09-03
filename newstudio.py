@@ -322,6 +322,7 @@ class NewStudioPlugin(object):
 
     def url_rewrite(self, task, entry):
         viewtopic_url = entry['url']
+        viewtopic_url = viewtopic_url + '&__fix403=1'
 
         try:
             viewtopic_response = task.requests.get(viewtopic_url)
