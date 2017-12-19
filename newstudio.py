@@ -393,6 +393,7 @@ class NewStudioPlugin(object):
         db_session = Session()
 
         viewtopic_link_regexp = re.compile(r'.*/viewtopic\.php\?t=(\d+).*', flags=re.IGNORECASE)
+        download_link_regexp = re.compile(r'.*/download\.php\?id=(\d+).*', flags=re.IGNORECASE)
         pagination_regexp = re.compile(r'pagination.*', flags=re.IGNORECASE)
         quality_regexp = re.compile(r'^.*\)\s*(.*?)$', flags=re.IGNORECASE)
         search_regexp = re.compile(r'^(.*?)\s*s(\d+?)e(\d+?)$', flags=re.IGNORECASE)
@@ -449,11 +450,11 @@ class NewStudioPlugin(object):
 
                 row_nodes = accordion_node.find_all('div', class_='row-fluid')
                 for row_node in row_nodes:
-                    link_node = row_node.find('a', class_='torTopic tt-text', href=viewtopic_link_regexp)
-                    if not link_node:
+                    title_node = row_node.find('a', class_='torTopic tt-text', href=viewtopic_link_regexp)
+                    if not title_node:
                         continue
 
-                    title = link_node.text
+                    title = title_node.text
                     ep_match = EPISODE_REGEXP.search(title)
                     if not ep_match:
                         continue
@@ -469,7 +470,14 @@ class NewStudioPlugin(object):
                     if quality_match:
                         quality = quality_match.group(1)
 
-                    torrent_url = link_node.get('href')
+                    # viewtopic_url = title_node.get('href')
+                    # viewtopic_url = process_url(viewtopic_url, viewforum_response.url)
+
+                    torrent_node = row_node.find('a', href=download_link_regexp)
+                    if not torrent_node:
+                        continue
+
+                    torrent_url = torrent_node.get('href')
                     torrent_url = process_url(torrent_url, viewforum_response.url)
 
                     entry = Entry()
