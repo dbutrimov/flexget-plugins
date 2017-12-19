@@ -22,7 +22,7 @@ lostfilm_auth:
 
 ```yaml
 lostfilm:
-	regexp: '720p'
+  regexp: '720p'
 ```
 
 #### Search
@@ -43,8 +43,8 @@ Web site: [newstudio.tv](http://newstudio.tv)
 
 ```yaml
 newstudio_auth:
-	username: 'username_here'
-	password: 'password_here'
+  username: 'username_here'
+  password: 'password_here'
 ```
 
 ---
@@ -59,8 +59,8 @@ Web site: [baibako.tv](http://baibako.tv)
 
 ```yaml
 baibako_auth:
-	username: 'username_here'
-	password: 'password_here'
+  username: 'username_here'
+  password: 'password_here'
 ```
 
 #### Search
@@ -71,7 +71,7 @@ baibako: yes
 
 ```yaml
 baibako:
-	serial_tab: 'all'  # 'hd720', 'hd1080', 'x264', 'xvid' or 'all' (default)
+  serial_tab: 'all'  # 'hd720', 'hd1080', 'x264', 'xvid' or 'all' (default)
 ```
 
 ---
@@ -86,6 +86,6 @@ Web site: [alexfilm.cc](http://alexfilm.cc)
 
 ```yaml
 alexfilm_auth:
-	username: 'username_here'
-	password: 'password_here'
+  username: 'username_here'
+  password: 'password_here'
 ```
