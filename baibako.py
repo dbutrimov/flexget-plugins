@@ -7,7 +7,7 @@ import logging
 import re
 from datetime import datetime, timedelta
 from time import sleep
-from urlparse import urljoin
+from urllib.parse import urljoin
 
 from bs4 import BeautifulSoup
 from flexget import options
