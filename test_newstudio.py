@@ -25,14 +25,18 @@ class TestNewStudio(unittest.TestCase):
         self.assertRaises(Exception)
 
     def test_forum_topics(self):
-        topics = newstudio.NewStudio.get_forum_topics(362, self._requests)
+        topics = newstudio.NewStudio.get_forum_topics(206, self._requests)
         print(len(topics))
 
         for topic in topics:
-            topic_info = newstudio.NewStudioParser.parse_topic_title(topic.title)
-            print(u"[{0}, {1}] {2} - ({3}, {4})".format(
-                topic.id, topic.download_id, topic_info.title,
-                topic_info.get_episode_id(), topic_info.quality))
+            try:
+                topic_info = newstudio.NewStudioParser.parse_topic_title(topic.title)
+            except newstudio.ParsingError as e:
+                print(e.message)
+            else:
+                print(u"[{0}, {1}] {2} - ({3}, {4})".format(
+                    topic.id, topic.download_id, topic_info.title,
+                    topic_info.get_episode_id(), topic_info.quality))
 
         self.assertRaises(Exception)
 
