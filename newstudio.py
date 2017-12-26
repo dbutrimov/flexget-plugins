@@ -7,11 +7,6 @@ import logging
 import re
 from datetime import datetime, timedelta
 from time import sleep
-try:
-    from urllib.parse import urljoin
-except ImportError:
-    from urlparse import urljoin
-
 from bs4 import BeautifulSoup
 from flexget import plugin
 from flexget.db_schema import versioned_base
@@ -23,6 +18,11 @@ from flexget.utils import requests
 from requests.auth import AuthBase
 from sqlalchemy import Column, Unicode, Integer, DateTime, ForeignKey, func
 from sqlalchemy.types import TypeDecorator, VARCHAR
+
+try:
+    from urllib.parse import urljoin
+except ImportError:
+    from urlparse import urljoin
 
 PLUGIN_NAME = 'newstudio'
 SCHEMA_VER = 0
@@ -476,11 +476,12 @@ class NewStudio(object):
 
     @staticmethod
     def get_forum_topics(forum_id, requests_):
+        items_count = 50
         result = set()
         pages_count = 0
         page_index = 0
         while True:
-            url = '{0}&start={1}'.format(NewStudio.get_forum_url(forum_id), page_index * 50)
+            url = '{0}&start={1}'.format(NewStudio.get_forum_url(forum_id), page_index * items_count)
             response = requests_.get(url)
             html = response.content
             sleep(3)
