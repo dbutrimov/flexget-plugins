@@ -12,29 +12,29 @@ class TestBaibako(unittest.TestCase):
             self._username = config['secrets']['baibako']['username']
             self._password = config['secrets']['baibako']['password']
 
-    def test_auth(self):
-        auth_handler = baibako.BaibakoAuth(self._username, self._password)
-        print(auth_handler.cookies_)
+            self._auth = baibako.BaibakoAuth(self._username, self._password)
+            self._requests = requests.session()
+            self._requests.auth = self._auth
 
-        self.assertRaises(Exception)
-        return auth_handler
-
-    def test_shows_parsing(self):
-        response = requests.get('http://baibako.tv/serials.php')
-        html = response.text
-        entries = baibako.BaibakoParser.parse_shows_page(html)
-        for entry in entries:
-            print(entry)
+    def test_forums(self):
+        forums = baibako.Baibako.get_forums(self._requests)
+        for forum in forums:
+            print(u"[{0}] {1}".format(forum.id, forum.title))
 
         self.assertRaises(Exception)
 
-    def test_episodes_parsing(self):
-        auth_handler = self.test_auth()
-        response = requests.get('http://baibako.tv/serial.php?id=472&tab=hd720', auth=auth_handler)
-        html = response.text
-        entries = baibako.BaibakoParser.parse_episodes_page(html)
-        for entry in entries:
-            print(entry)
+    def test_forum_topics(self):
+        topics = baibako.Baibako.get_forum_topics(472, 'all', self._requests)
+        for topic in topics:
+            print(u"[{0}] {1}".format(topic.id, topic.title))
+
+            topic_info = baibako.BaibakoParser.parse_topic_title(topic.title)
+            print(u"{0} / {1} / {2} / {3}".format(
+                topic_info.title,
+                topic_info.alternative_titles[0],
+                topic_info.get_episode_id(),
+                topic_info.quality
+            ))
 
         self.assertRaises(Exception)
 

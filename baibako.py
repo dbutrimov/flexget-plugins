@@ -7,11 +7,6 @@ import logging
 import re
 from datetime import datetime, timedelta
 from time import sleep
-try:
-    from urllib.parse import urljoin
-except ImportError:
-    from urlparse import urljoin
-
 from bs4 import BeautifulSoup
 from flexget import options
 from flexget import plugin
@@ -26,8 +21,16 @@ from requests.auth import AuthBase
 from sqlalchemy import Column, Unicode, Integer, DateTime, UniqueConstraint, ForeignKey, func
 from sqlalchemy.types import TypeDecorator, VARCHAR
 
+try:
+    from urllib.parse import urljoin
+except ImportError:
+    from urlparse import urljoin
+
 PLUGIN_NAME = 'baibako'
 SCHEMA_VER = 0
+
+DOMAIN = 'baibako.tv'
+BASE_URL = 'http://baibako.tv'
 
 log = logging.getLogger(PLUGIN_NAME)
 Base = versioned_base(PLUGIN_NAME, SCHEMA_VER)
@@ -75,8 +78,8 @@ class BaibakoAuth(AuthBase):
     def try_authenticate(self, payload):
         for _ in range(5):
             session = requests.Session()
-            session.post('http://baibako.tv/takelogin.php', data=payload)
-            cookies = session.cookies.get_dict(domain='baibako.tv')
+            session.post('{0}/takelogin.php'.format(BASE_URL), data=payload)
+            cookies = session.cookies.get_dict(domain=DOMAIN)
             if cookies and len(cookies) > 0 and 'uid' in cookies:
                 return cookies
             sleep(3)
@@ -164,236 +167,274 @@ class BaibakoAuthPlugin(object):
 
 
 # region BaibakoPlugin
-DETAILS_URL_REGEXP = re.compile(r'^https?://(?:www\.)?baibako\.tv/details\.php\?id=(\d+).*$', flags=re.IGNORECASE)
-
 TABLE_CLASS_REGEXP = re.compile(r'table.*', flags=re.IGNORECASE)
-EPISODE_TITLE_REGEXP = re.compile(
+
+FORUM_ID_REGEXP = re.compile(r'serial\.php\?id=(\d+)', flags=re.IGNORECASE)
+TOPIC_ID_REGEXP = re.compile(r'details\.php\?id=(\d+)', flags=re.IGNORECASE)
+
+TOPIC_TITLE_REGEXP = re.compile(
     r'^([^/]*?)\s*/\s*([^/]*?)\s*/\s*s(\d+)e(\d+)(?:-(\d+))?\s*/\s*([^/]*?)\s*(?:(?:/.*)|$)',
     flags=re.IGNORECASE)
 
-EPISODE_LINK_REGEXP = re.compile(r'details.php\?id=(\d+)', flags=re.IGNORECASE)
+
+class BaibakoForum(object):
+    def __init__(self, id_, title):
+        self.id = id_
+        self.title = title
 
 
-class DbBaibakoShow(Base):
-    __tablename__ = 'baibako_shows'
-    id = Column(Integer, primary_key=True, nullable=False)
-    title = Column(Unicode, index=True, nullable=False)
-    url = Column(Unicode, nullable=False)
-    updated_at = Column(DateTime, nullable=False)
+class BaibakoTopic(object):
+    def __init__(self, id_, title):
+        self.id = id_
+        self.title = title
 
 
-class DbBaibakoShowAlternateName(Base):
-    __tablename__ = 'baibako_show_alternate_names'
-    id = Column(Integer, primary_key=True, autoincrement=True, nullable=False)
-    show_id = Column(Integer, ForeignKey('baibako_shows.id'), nullable=False)
-    title = Column(Unicode, index=True, nullable=False)
-    __table_args__ = (UniqueConstraint('show_id', 'title', name='_show_title_uc'),)
+class BaibakoTopicInfo(object):
+    def __init__(self, title, alternative_titles, season, begin_episode, end_episode, quality):
+        self.title = title
+        self.alternative_titles = alternative_titles
+        self.season = season
+        self.begin_episode = begin_episode
+        self.end_episode = max([end_episode, begin_episode])
+        self.quality = quality
+
+    def get_episode_id(self):
+        if self.begin_episode <= 0:
+            return 'S{0:02d}'.format(self.season)
+        if self.end_episode <= self.begin_episode:
+            return 'S{0:02d}E{1:02d}'.format(self.season, self.begin_episode)
+        return 'S{0:02d}E{1:02d}-{2:02d}'.format(self.season, self.begin_episode, self.end_episode)
+
+    def contains_episode(self, episode):
+        return (episode >= self.begin_episode) and (episode <= self.end_episode)
 
 
-class DbBaibakoEpisode(Base):
-    __tablename__ = 'baibako_episode'
-    id = Column(Integer, primary_key=True, autoincrement=True, nullable=False)
-    show_id = Column(Integer, nullable=False)
-    season = Column(Integer, nullable=False)
-    episode = Column(Integer, nullable=False)
-    title = Column(Unicode, nullable=False)
-    url = Column(Unicode, nullable=False)
-    timestamp = Column(DateTime, nullable=False)
-    __table_args__ = (UniqueConstraint('show_id', 'season', 'episode', name='_show_episode_uc'),)
+class ParsingError(Exception):
+    def __init__(self, message):
+        self.message = message
+
+    def __str__(self):
+        return "{0}".format(self.message)
+
+    def __unicode__(self):
+        return u"{0}".format(self.message)
 
 
 class BaibakoParser(object):
     @staticmethod
-    def parse_shows_page(html):
-        serials_tree = BeautifulSoup(html, 'html.parser')
-        serials_node = serials_tree.find('table', class_=TABLE_CLASS_REGEXP)
-        if not serials_node:
+    def parse_forums(html):
+        soup = BeautifulSoup(html, 'html.parser')
+        table_node = soup.find('table', class_=TABLE_CLASS_REGEXP)
+        if not table_node:
             raise Exception('Node <table class=`table.*`> are not found')
 
-        shows = []
+        forums = set()
 
-        url_regexp = re.compile(r'id=(\d+)', flags=re.IGNORECASE)
-        link_nodes = serials_node.find_all('a')
-        for link_node in link_nodes:
-            serial_link = link_node.get('href')
-            url_match = url_regexp.search(serial_link)
+        row_nodes = table_node.find_all('a', href=FORUM_ID_REGEXP)
+        for row_node in row_nodes:
+            forum_url = row_node.get('href')
+            url_match = FORUM_ID_REGEXP.search(forum_url)
             if not url_match:
                 continue
 
-            show_id = int(url_match.group(1))
-            serial_title = link_node.text
+            forum_id = int(url_match.group(1))
+            forum_title = row_node.text
 
-            shows.append({
-                'show_id': show_id,
-                'titles': [serial_title],
-                'url': serial_link
-            })
+            forums.add(BaibakoForum(forum_id, forum_title))
 
-        log.debug("{0:d} show(s) are found".format(len(shows)))
-        return shows
+        return forums
 
     @staticmethod
-    def parse_episodes_page(html):
-        serial_tree = BeautifulSoup(html, 'html.parser')
-        serial_table_node = serial_tree.find('table', class_=TABLE_CLASS_REGEXP)
-        if not serial_table_node:
+    def parse_topics(html):
+        soup = BeautifulSoup(html, 'html.parser')
+        table_node = soup.find('table', class_=TABLE_CLASS_REGEXP)
+        if not table_node:
             raise Exception('Node <table class=`table.*`> are not found')
 
-        entries = list()
+        topics = set()
 
-        link_nodes = serial_table_node.find_all('a', href=EPISODE_LINK_REGEXP)
-        for link_node in link_nodes:
-            link_title = link_node.text
-            episode_title_match = EPISODE_TITLE_REGEXP.search(link_title)
-            if not episode_title_match:
-                log.warning("Error while parsing serial page: title `{0}` are not matched".format(link_title))
+        row_nodes = table_node.find_all('a', href=TOPIC_ID_REGEXP)
+        for row_node in row_nodes:
+            topic_url = row_node.get('href')
+            url_match = TOPIC_ID_REGEXP.search(topic_url)
+            if not url_match:
                 continue
 
-            season = int(episode_title_match.group(3))
-            first_episode = int(episode_title_match.group(4))
-            last_episode = first_episode
-            last_episode_group = episode_title_match.group(5)
-            if last_episode_group:
-                last_episode = int(last_episode_group)
+            # entry_title = "{0} / {1} / {2} / {3}".format(title, ru_title, episode_id, quality)
 
-            ru_title = episode_title_match.group(1)
-            title = episode_title_match.group(2)
-            quality = episode_title_match.group(6)
+            topic_id = int(url_match.group(1))
+            topic_title = row_node.text
 
-            if last_episode > first_episode:
-                episode_id = 's{0:02d}e{1:02d}-{2:02d}'.format(season, first_episode, last_episode)
-            else:
-                episode_id = 's{0:02d}e{1:02d}'.format(season, first_episode)
+            topics.add(BaibakoTopic(topic_id, topic_title))
 
-            entry_title = "{0} / {1} / {2} / {3}".format(title, ru_title, episode_id, quality)
-            entry_url = link_node.get('href')
+        return topics
 
-            entries.append({
-                'season': season,
-                'episode': first_episode,
-                'ep': episode_id,
-                'title': entry_title,
-                'url': entry_url
-            })
+    @staticmethod
+    def parse_topic_title(title):
+        match = TOPIC_TITLE_REGEXP.search(title)
+        if not match:
+            raise ParsingError("Title `{0}` has invalid format".format(title))
 
-        return entries
+        season = int(match.group(3))
+
+        try:
+            begin_episode = int(match.group(4))
+        except Exception:
+            begin_episode = 0
+
+        try:
+            end_episode = int(match.group(5))
+        except Exception:
+            end_episode = begin_episode
+
+        title = match.group(1)
+        alternative_title = match.group(2)
+        quality = match.group(6)
+
+        return BaibakoTopicInfo(title, [alternative_title], season, begin_episode, end_episode, quality)
+
+
+class DbBaibakoForum(Base):
+    __tablename__ = 'baibako_forums'
+    id = Column(Integer, primary_key=True, nullable=False)
+    title = Column(Unicode, index=True, nullable=False)
+    updated_at = Column(DateTime, nullable=False)
+
+
+class DbBaibakoTopic(Base):
+    __tablename__ = 'baibako_topics'
+    id = Column(Integer, primary_key=True, nullable=False)
+    forum_id = Column(Integer, nullable=False)
+    title = Column(Unicode, nullable=False)
+    updated_at = Column(DateTime, nullable=False)
 
 
 class BaibakoDatabase(object):
     @staticmethod
-    def shows_timestamp(db_session):
-        shows_timestamp = db_session.query(func.min(DbBaibakoShow.updated_at)).scalar() or None
-        return shows_timestamp
+    def forums_timestamp(db_session):
+        timestamp = db_session.query(func.min(DbBaibakoForum.updated_at)).scalar() or None
+        return timestamp
 
     @staticmethod
-    def shows_count(db_session):
-        return db_session.query(DbBaibakoShow).count()
+    def forums_count(db_session):
+        return db_session.query(DbBaibakoForum).count()
 
     @staticmethod
-    def clear_shows(db_session):
-        db_session.query(DbBaibakoShowAlternateName).delete()
-        db_session.query(DbBaibakoShow).delete()
+    def clear_forums(db_session):
+        db_session.query(DbBaibakoForum).delete()
         db_session.commit()
 
     @staticmethod
-    def update_shows(shows, db_session):
+    def update_forums(forums, db_session):
         # Clear database
-        BaibakoDatabase.clear_shows(db_session)
+        BaibakoDatabase.clear_forums(db_session)
 
         # Insert new rows
-        if shows and len(shows) > 0:
+        if forums and len(forums) > 0:
             now = datetime.now()
-            for show in shows:
-                db_show = DbBaibakoShow(id=show['show_id'], title=show['titles'][0], url=show['url'], updated_at=now)
-                db_session.add(db_show)
-
-                for index, item in enumerate(show['titles'][1:], start=1):
-                    alternate_name = DbBaibakoShowAlternateName(show_id=show['show_id'], title=item)
-                    db_session.add(alternate_name)
+            for forum in forums:
+                db_forum = DbBaibakoForum(id=forum.id, title=forum.title, updated_at=now)
+                db_session.add(db_forum)
 
             db_session.commit()
 
     @staticmethod
-    def get_shows(db_session):
-        shows = list()
+    def get_forums(db_session):
+        forums = set()
 
-        db_shows = db_session.query(DbBaibakoShow).all()
-        for db_show in db_shows:
-            titles = list()
-            titles.append(db_show.title)
+        db_forums = db_session.query(DbBaibakoForum).all()
+        for db_forum in db_forums:
+            forums.add(BaibakoForum(db_forum.id, db_forum.title))
 
-            db_alternate_names = db_session.query(DbBaibakoShowAlternateName).filter(
-                DbBaibakoShowAlternateName.show_id == db_show.id).all()
-            if db_alternate_names and len(db_alternate_names) > 0:
-                for db_alternate_name in db_alternate_names:
-                    titles.append(db_alternate_name.title)
-
-            shows.append({
-                'show_id': db_show.id,
-                'titles': titles,
-                'url': db_show.url
-            })
-
-        return shows
+        return forums
 
     @staticmethod
-    def get_show_by_id(show_id, db_session):
-        db_show = db_session.query(DbBaibakoShow).filter(DbBaibakoShow.id == show_id).first()
-        if db_show:
-            titles = list()
-            titles.append(db_show.title)
-
-            db_alternate_names = db_session.query(DbBaibakoShowAlternateName).filter(
-                DbBaibakoShowAlternateName.show_id == db_show.id).all()
-            if db_alternate_names and len(db_alternate_names) > 0:
-                for db_alternate_name in db_alternate_names:
-                    titles.append(db_alternate_name.title)
-
-            return {
-                'show_id': db_show.id,
-                'titles': titles,
-                'url': db_show.url
-            }
+    def get_forum_by_id(forum_id, db_session):
+        db_forum = db_session.query(DbBaibakoForum).filter(DbBaibakoForum.id == forum_id).first()
+        if db_forum:
+            return BaibakoForum(db_forum.id, db_forum.title)
 
         return None
 
     @staticmethod
-    def find_show_by_title(title, db_session):
-        db_show = db_session.query(DbBaibakoShow).filter(DbBaibakoShow.title == title).first()
-        if db_show:
-            return BaibakoDatabase.get_show_by_id(db_show.id, db_session)
-
-        db_alternate_name = db_session.query(DbBaibakoShowAlternateName).filter(
-            DbBaibakoShowAlternateName.title == title).first()
-        if db_alternate_name:
-            return BaibakoDatabase.get_show_by_id(db_alternate_name.show_id, db_session)
+    def find_forum_by_title(title, db_session):
+        db_forum = db_session.query(DbBaibakoForum).filter(DbBaibakoForum.title == title).first()
+        if db_forum:
+            return BaibakoForum(db_forum.id, db_forum.title)
 
         return None
 
     @staticmethod
-    def find_episode(show_id, season, episode, db_session):
-        return db_session.query(DbBaibakoEpisode).filter(
-            DbBaibakoEpisode.show_id == show_id,
-            DbBaibakoEpisode.season == season,
-            DbBaibakoEpisode.episode == episode).first()
+    def forum_topics_timestamp(forum_id, db_session):
+        topics_timestamp = db_session.query(func.min(DbBaibakoTopic.updated_at)).filter(
+            DbBaibakoTopic.forum_id == forum_id).scalar() or None
+        return topics_timestamp
 
     @staticmethod
-    def insert_episode(show_id, season, episode, title, url, db_session):
-        db_episode = BaibakoDatabase.find_episode(show_id, season, episode, db_session)
-        now = datetime.now()
-        if not db_episode:
-            db_episode = DbBaibakoEpisode(
-                show_id=show_id,
-                season=season,
-                episode=episode)
-        db_episode.title = title
-        db_episode.url = url
-        db_episode.timestamp = now
+    def forum_topics_count(forum_id, db_session):
+        return db_session.query(DbBaibakoTopic).filter(DbBaibakoTopic.forum_id == forum_id).count()
 
-        db_session.add(db_episode)
+    @staticmethod
+    def clear_forum_topics(forum_id, db_session):
+        db_session.query(DbBaibakoTopic).filter(DbBaibakoTopic.forum_id == forum_id).delete()
         db_session.commit()
 
-        return db_episode
+    @staticmethod
+    def update_forum_topics(forum_id, topics, db_session):
+        # Clear database
+        BaibakoDatabase.clear_forum_topics(forum_id, db_session)
+
+        # Insert new rows
+        if topics and len(topics) > 0:
+            now = datetime.now()
+            for topic in topics:
+                db_topic = DbBaibakoTopic(id=topic.id, forum_id=forum_id, title=topic.title, updated_at=now)
+                db_session.add(db_topic)
+
+            db_session.commit()
+
+    @staticmethod
+    def get_forum_topics(forum_id, db_session):
+        topics = set()
+
+        db_topics = db_session.query(DbBaibakoTopic).filter(DbBaibakoTopic.forum_id == forum_id)
+        for db_topic in db_topics:
+            topic = BaibakoTopic(db_topic.id, db_topic.title)
+            topics.add(topic)
+
+        return topics
+
+
+class Baibako(object):
+    @staticmethod
+    def get_forum_url(forum_id, tab='all'):
+        return '{0}/serial.php?id={1}&tab={2}'.format(BASE_URL, forum_id, tab)
+
+    @staticmethod
+    def get_topic_url(topic_id):
+        return '{0}/details.php?id={1}'.format(BASE_URL, topic_id)
+
+    @staticmethod
+    def get_download_url(topic_id):
+        return '{0}/download.php?id={1}'.format(BASE_URL, topic_id)
+
+    @staticmethod
+    def get_forums(requests_):
+        url = '{0}/serials.php'.format(BASE_URL)
+        response = requests_.get(url)
+        html = response.content
+        return BaibakoParser.parse_forums(html)
+
+    @staticmethod
+    def get_forum_topics(forum_id, tab, requests_):
+        url = '{0}/serial.php?id={1}&tab={2}'.format(BASE_URL, forum_id, tab)
+        response = requests_.get(url)
+        html = response.content
+        return BaibakoParser.parse_topics(html)
+
+
+FORUMS_CACHE_DAYS_LIFETIME = 3
+FORUM_TOPICS_CACHE_DAYS_LIFETIME = 1
 
 
 class BaibakoPlugin(object):
@@ -421,60 +462,54 @@ class BaibakoPlugin(object):
 
     def url_rewritable(self, task, entry):
         url = entry['url']
-        return DETAILS_URL_REGEXP.match(url)
+        match = TOPIC_ID_REGEXP.search(url)
+        if match:
+            return True
+        return False
 
     def url_rewrite(self, task, entry):
         url = entry['url']
-        url_match = DETAILS_URL_REGEXP.search(url)
+        url_match = TOPIC_ID_REGEXP.search(url)
         if not url_match:
             reject_reason = "Url don't matched: {0}".format(url)
             log.verbose(reject_reason)
             # entry.reject(reject_reason)
             return False
 
-        topic_id = url_match.group(1)
-        url = 'http://baibako.tv/download.php?id={0}'.format(topic_id)
-        entry['url'] = url
+        topic_id = int(url_match.group(1))
+        entry['url'] = Baibako.get_download_url(topic_id)
         return True
 
-    def get_shows(self, task):
-        serials_url = 'http://baibako.tv/serials.php'
-
-        log.debug("Fetching serials page `{0}`...".format(serials_url))
-
-        try:
-            serials_response = task.requests.get(serials_url)
-        except requests.RequestException as e:
-            log.error("Error while fetching page: {0}".format(e))
-            sleep(3)
-            return None
-        serials_html = serials_response.text
-        sleep(3)
-
-        log.debug("Parsing serials page `{0}`...".format(serials_url))
-
-        shows = BaibakoParser.parse_shows_page(serials_html)
-        if shows:
-            for show in shows:
-                show['url'] = process_url(show['url'], serials_response.url)
-
-        return shows
-
-    def search_show(self, task, title, db_session):
+    def _search_forum(self, task, title, db_session):
         update_required = True
-        db_timestamp = BaibakoDatabase.shows_timestamp(db_session)
+        db_timestamp = BaibakoDatabase.forums_timestamp(db_session)
         if db_timestamp:
             difference = datetime.now() - db_timestamp
-            update_required = difference.days > 3
+            update_required = difference.days > FORUMS_CACHE_DAYS_LIFETIME
         if update_required:
-            log.debug('Update shows...')
-            shows = self.get_shows(task)
+            log.debug('Update forums...')
+            shows = Baibako.get_forums(task.requests)
             if shows:
-                log.debug('{0} show(s) received'.format(len(shows)))
-                BaibakoDatabase.update_shows(shows, db_session)
+                log.debug('{0} forum(s) received'.format(len(shows)))
+                BaibakoDatabase.update_forums(shows, db_session)
 
-        show = BaibakoDatabase.find_show_by_title(title, db_session)
-        return show
+        return BaibakoDatabase.find_forum_by_title(title, db_session)
+
+    def _search_forum_topics(self, task, forum_id, tab, db_session):
+        update_required = True
+        db_timestamp = BaibakoDatabase.forum_topics_timestamp(forum_id, db_session)
+        if db_timestamp:
+            difference = datetime.now() - db_timestamp
+            update_required = difference.days > FORUM_TOPICS_CACHE_DAYS_LIFETIME
+        if update_required:
+            log.debug('Update topics for forum `{0}`...'.format(forum_id))
+            topics = Baibako.get_forum_topics(forum_id, tab, task.requests)
+            if topics:
+                log.debug('{0} topic(s) received for forum `{1}`'.format(len(topics), forum_id))
+                BaibakoDatabase.update_forum_topics(forum_id, topics, db_session)
+                return topics
+
+        return BaibakoDatabase.get_forum_topics(forum_id, db_session)
 
     def search(self, task, entry, config=None):
         entries = set()
@@ -496,47 +531,30 @@ class BaibakoPlugin(object):
 
             log.debug("{0} s{1:02d}e{2:02d}".format(search_title, search_season, search_episode))
 
-            show = self.search_show(task, search_title, db_session)
-            if not show:
+            forum = self._search_forum(task, search_title, db_session)
+            if not forum:
                 continue
 
-            db_episode = BaibakoDatabase.find_episode(show['show_id'], search_season, search_episode, db_session)
-            if not db_episode:
-                serial_url = show['url'] + '&tab=' + serial_tab
+            topics = self._search_forum_topics(task, forum.id, serial_tab, db_session)
+            for topic in topics:
                 try:
-                    serial_response = task.requests.get(serial_url)
-                except requests.RequestException as e:
-                    log.error("Error while fetching page: {0}".format(e))
-                    sleep(3)
-                    continue
-                serial_html = serial_response.text
-                sleep(3)
+                    topic_info = BaibakoParser.parse_topic_title(topic.title)
+                except ParsingError as e:
+                    log.warn(e)
+                else:
+                    if topic_info.season == search_season and topic_info.contains_episode(search_episode):
+                        episode_id = topic_info.get_episode_id()
 
-                try:
-                    parsed_episodes = BaibakoParser.parse_episodes_page(serial_html)
-                except Exception as e:
-                    log.error("Error while parsing episodes page: {0}".format(e))
-                    continue
+                        entry = Entry()
+                        entry['title'] = "{0} / {1} / {2}".format(
+                            search_title, episode_id, topic_info.quality)
+                        entry['url'] = Baibako.get_download_url(topic.download_id)
+                        # entry['series_season'] = topic_info.season
+                        # entry['series_episode'] = topic_info.begin_episode
+                        entry['series_id'] = episode_id
+                        # entry['quality'] = topic_info.quality
 
-                for parsed_episode in parsed_episodes:
-                    season = parsed_episode['season']
-                    episode = parsed_episode['episode']
-
-                    url = parsed_episode['url']
-                    url = process_url(url, serial_response.url)
-
-                    db_updated_episode = BaibakoDatabase.insert_episode(
-                        show['show_id'], season, episode, parsed_episode['title'], url, db_session)
-
-                    if season == search_season and episode == search_episode:
-                        # (first_episode > search_episode or last_episode < search_episode):
-                        db_episode = db_updated_episode
-
-            if db_episode:
-                entry = Entry()
-                entry['title'] = db_episode.title
-                entry['url'] = db_episode.url
-                entries.add(entry)
+                        entries.add(entry)
 
         return entries
 
@@ -546,9 +564,8 @@ class BaibakoPlugin(object):
 
 def reset_cache(manager):
     db_session = Session()
-    db_session.query(DbBaibakoEpisode).delete()
-    db_session.query(DbBaibakoShowAlternateName).delete()
-    db_session.query(DbBaibakoShow).delete()
+    db_session.query(DbBaibakoTopic).delete()
+    db_session.query(DbBaibakoForum).delete()
     # db_session.query(LostFilmAccount).delete()
     db_session.commit()
 
