@@ -454,23 +454,23 @@ class NewStudioDatabase(object):
 
 
 class NewStudio(object):
-    base_url = 'http://newstudio.tv'
+    BASE_URL = 'http://newstudio.tv'
 
     @staticmethod
     def get_forum_url(forum_id):
-        return '{0}/viewforum.php?f={1}'.format(NewStudio.base_url, forum_id)
+        return '{0}/viewforum.php?f={1}'.format(NewStudio.BASE_URL, forum_id)
 
     @staticmethod
     def get_topic_url(topic_id):
-        return '{0}/viewtopic.php?t={1}'.format(NewStudio.base_url, topic_id)
+        return '{0}/viewtopic.php?t={1}'.format(NewStudio.BASE_URL, topic_id)
 
     @staticmethod
     def get_download_url(download_id):
-        return '{0}/download.php?id={1}'.format(NewStudio.base_url, download_id)
+        return '{0}/download.php?id={1}'.format(NewStudio.BASE_URL, download_id)
 
     @staticmethod
     def get_forums(requests_):
-        response = requests_.get(NewStudio.base_url)
+        response = requests_.get(NewStudio.BASE_URL)
         html = response.content
         return NewStudioParser.parse_forums(html)
 
