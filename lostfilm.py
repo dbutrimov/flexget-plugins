@@ -7,11 +7,6 @@ import logging
 import re
 from datetime import datetime, timedelta
 from time import sleep
-try:
-    from urllib.parse import urljoin
-except ImportError:
-    from urlparse import urljoin
-
 from bs4 import BeautifulSoup
 from flexget import options
 from flexget import plugin
@@ -26,35 +21,41 @@ from requests.auth import AuthBase
 from sqlalchemy import Column, Unicode, Integer, DateTime, UniqueConstraint, ForeignKey, func
 from sqlalchemy.types import TypeDecorator, VARCHAR
 
+try:
+    from urllib.parse import urljoin
+except ImportError:
+    from urlparse import urljoin
+
 PLUGIN_NAME = 'lostfilm'
 SCHEMA_VER = 0
+
+BASE_URL = 'http://lostfilm.tv'
+API_URL = BASE_URL + '/ajaxik.php'
+COOKIES_DOMAIN = '.lostfilm.tv'
 
 log = logging.getLogger(PLUGIN_NAME)
 Base = versioned_base(PLUGIN_NAME, SCHEMA_VER)
 
 
 def process_url(url, base_url):
+    """
+    :type url: str
+    :type base_url: str
+    :rtype: str
+    """
     return urljoin(base_url, url)
 
 
 class LostFilmApi(object):
-    API_URL = 'http://lostfilm.tv/ajaxik.php'
-
     @staticmethod
-    def task_post(task, payload):
-        return LostFilmApi.requests_post(task.requests, payload)
-
-    @staticmethod
-    def requests_post(requests_, payload):
+    def post(requests_, payload):
+        """
+        :type requests_: requests.Session
+        :type payload: dict
+        :rtype: requests.Response
+        """
         response = requests_.post(
-            LostFilmApi.API_URL,
-            data=payload)
-        return response
-
-    @staticmethod
-    def session_post(session, payload):
-        response = session.post(
-            LostFilmApi.API_URL,
+            API_URL,
             data=payload)
         return response
 
@@ -97,16 +98,28 @@ class LostFilmAuth(AuthBase):
     """
 
     def try_authenticate(self, payload):
+        """
+        :type payload: dict
+        :rtype: dict
+        """
         for _ in range(5):
             session = requests.Session()
             # session.headers['User-Agent'] = 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_12_1) ' \
             #                                 'AppleWebKit/537.36 (KHTML, like Gecko) Chrome/54.0.2840.98 Safari/537.36'
 
-            response = LostFilmApi.session_post(session, payload)
+            response = LostFilmApi.post(session, payload)
             response_json = response.json()
-            if 'error' not in response_json and 'success' in response_json and response_json['success']:
+            if 'need_captcha' in response_json and response_json['need_captcha']:
+                raise PluginError('Unable to obtain cookies from LostFilm. Captcha is required. '
+                                  'Please logout from you account using web browser (Chrome, Firefox, Safari, etc.) '
+                                  'and login again with captcha. Then try again.')
+            if 'error' in response_json:
+                raise PluginError('Unable to obtain cookies from LostFilm. The error was caused: {0}'.format(
+                    response_json['error']))
+
+            if 'success' in response_json and response_json['success']:
                 # username = response_json['name']
-                cookies = session.cookies.get_dict(domain='.lostfilm.tv')
+                cookies = session.cookies.get_dict(domain=COOKIES_DOMAIN)
                 if cookies and len(cookies) > 0:
                     return cookies
 
@@ -115,6 +128,12 @@ class LostFilmAuth(AuthBase):
         raise PluginError('Unable to obtain cookies from LostFilm. Looks like invalid username or password.')
 
     def __init__(self, username, password, cookies=None, db_session=None):
+        """
+        :type username: str
+        :type password: str
+        :type cookies: dict
+        :type db_session: flexget.manager.Session
+        """
         if cookies is None:
             log.debug('LostFilm cookie not found. Requesting new one.')
 
@@ -142,6 +161,10 @@ class LostFilmAuth(AuthBase):
             self.cookies_ = cookies
 
     def __call__(self, request):
+        """
+        :type request: requests.Request
+        :rtype: requests.Request
+        """
         request.prepare_cookies(self.cookies_)
         return request
 
@@ -204,11 +227,222 @@ class LostFilmAuthPlugin(object):
 
 
 # region LostFilmPlugin
+EP_REGEXP = re.compile(r"(\d+)\s+[Сс]езон\s+(\d+)\s+[Сс]ерия", flags=re.IGNORECASE)
+GOTO_REGEXP = re.compile(r'^goTo\([\'"](.*?)[\'"].*\)$', flags=re.IGNORECASE)
+
+
+# region LostFilmParser
+class ParsingError(Exception):
+    def __init__(self, message):
+        self.message = message
+
+    def __str__(self):
+        return "{0}".format(self.message)
+
+    def __unicode__(self):
+        return u"{0}".format(self.message)
+
+
+class LostFilmShow(object):
+    def __init__(self, id_, slug, title, alternate_titles=None):
+        """
+        :type id_: int
+        :type slug: str
+        :type title: str
+        :type alternate_titles: list[str]
+        """
+        self.id = id_
+        self.slug = slug
+        self.title = title
+        self.alternate_titles = alternate_titles
+
+
+class LostFilmEpisode(object):
+    def __init__(self, show_id, season, episode, title=None):
+        """
+        :type show_id: int
+        :type season: int
+        :type episode: int
+        :type title: str
+        """
+        self.show_id = show_id
+        self.season = season
+        self.episode = episode
+        self.title = title
+
+
+class LostFilmTorrent(object):
+    def __init__(self, url, title, label=None):
+        """
+        :type url: str
+        :type title: str
+        :type label: str
+        """
+        self.url = url
+        self.title = title
+        self.label = label
+
+
+class LostFilmParser(object):
+    @staticmethod
+    def parse_shows_json(text):
+        """
+        :type text: str
+        :rtype: list[LostFilmShow]
+        """
+        json_data = json.loads(text)
+        if 'result' not in json_data or json_data['result'] != 'ok':
+            raise ParsingError('`result` field is invalid')
+
+        shows = list()
+        shows_data = json_data['data']
+        for show_data in shows_data:
+            show = LostFilmShow(
+                int(show_data['id']),
+                show_data['alias'],
+                show_data['title'],
+                [show_data['title_orig']]
+            )
+            shows.append(show)
+
+        return shows
+
+    @staticmethod
+    def _parse_play_episode_button(node):
+        """
+        :type node: bs4.Tag
+        :rtype: LostFilmEpisode
+        """
+        button_node = node.find('div', class_='external-btn', onclick=PLAY_EPISODE_REGEXP)
+        if not button_node:
+            raise ParsingError('Node <div class=`external-btn`> are not found')
+        onclick = button_node.get('onclick')
+        onclick_match = PLAY_EPISODE_REGEXP.search(onclick)
+        if not onclick_match:
+            raise ParsingError('Node <div class=`external-btn`> have invalid `onclick` attribute')
+
+        show_id = int(onclick_match.group(1))
+        season = int(onclick_match.group(2))
+        episode = int(onclick_match.group(3))
+
+        return LostFilmEpisode(show_id, season, episode)
+
+    @staticmethod
+    def _strip_string(value):
+        """
+        :type value: str
+        :rtype: str
+        """
+        return value.strip(' \t\r\n')
+
+    @staticmethod
+    def _to_single_line(text, separator=' / '):
+        """
+        :type text: str
+        :type separator: str
+        :rtype: str
+        """
+        input_lines = text.splitlines()
+        lines = list()
+        for line in input_lines:
+            line = LostFilmParser._strip_string(line)
+            if line:
+                lines.append(line)
+
+        return separator.join([line for line in lines])
+
+    @staticmethod
+    def parse_seasons_page(html):
+        """
+        :type html: str
+        :rtype: list[LostFilmEpisode]
+        """
+        category_tree = BeautifulSoup(html, 'html.parser')
+        seasons_node = category_tree.find('div', class_='series-block')
+        if not seasons_node:
+            raise ParsingError('Node <div class=`series-block`> are not found')
+
+        episodes = list()
+
+        season_nodes = seasons_node.find_all('table', class_='movie-parts-list')
+        for season_node in season_nodes:
+            episode_nodes = season_node.find_all('tr')
+            for episode_node in episode_nodes:
+                # Check episode availability
+                play_node = episode_node.find('td', class_='zeta')
+                if not play_node:
+                    continue
+
+                try:
+                    episode = LostFilmParser._parse_play_episode_button(play_node)
+                except Exception:
+                    continue
+
+                # Parse episode title
+                title_node = episode_node.find('td', class_='gamma')
+                if title_node:
+                    episode.title = LostFilmParser._to_single_line(title_node.text, ' / ')
+
+                episodes.append(episode)
+
+        return episodes
+
+    @staticmethod
+    def parse_episode_page(html):
+        """
+        :type html: str
+        :rtype: LostFilmEpisode
+        """
+        episode_tree = BeautifulSoup(html, 'html.parser')
+        overlay_node = episode_tree.find('div', class_='overlay-pane')
+        if not overlay_node:
+            raise ParsingError('Node <div class=`overlay-pane`> are not found')
+
+        episode = LostFilmParser._parse_play_episode_button(overlay_node)
+
+        header_node = episode_tree.find('h1', class_='seria-header')
+        if header_node:
+            episode.title = LostFilmParser._to_single_line(header_node.text, ' / ')
+
+        return episode
+
+    @staticmethod
+    def parse_torrents_page(html):
+        """
+        :type html: str
+        :rtype: list[LostFilmTorrent]
+        """
+        torrents_tree = BeautifulSoup(html, 'html.parser')
+        torrents_list_node = torrents_tree.find('div', class_='inner-box--list')
+        if not torrents_list_node:
+            raise ParsingError('Node <div class=`inner-box--list`> are not found')
+
+        result = list()
+        item_nodes = torrents_list_node.find_all('div', class_='inner-box--item')
+        for item_node in item_nodes:
+            label = None
+            label_node = item_node.find('div', class_='inner-box--label')
+            if label_node:
+                label = LostFilmParser._strip_string(label_node.text)
+
+            link_node = item_node.find('a')
+            if link_node:
+                url = link_node.get('href')
+                title = LostFilmParser._to_single_line(link_node.text, ' ')
+
+                torrent = LostFilmTorrent(url, title, label)
+                result.append(torrent)
+
+        return result
+# endregion
+
+
+# region LostFilmDatabase
 class DbLostFilmShow(Base):
     __tablename__ = 'lostfilm_shows'
     id = Column(Integer, primary_key=True, nullable=False)
+    slug = Column(Unicode, nullable=False)
     title = Column(Unicode, index=True, nullable=False)
-    url = Column(Unicode, nullable=False)
     updated_at = Column(DateTime, nullable=False)
 
 
@@ -221,154 +455,21 @@ class DbLostFilmShowAlternateName(Base):
 
 
 class DbLostFilmEpisode(Base):
-    __tablename__ = 'lostfilm_episode'
+    __tablename__ = 'lostfilm_episodes'
     id = Column(Integer, primary_key=True, autoincrement=True, nullable=False)
     show_id = Column(Integer, nullable=False)
     season = Column(Integer, nullable=False)
     episode = Column(Integer, nullable=False)
     title = Column(Unicode, nullable=False)
-    url = Column(Unicode, nullable=False)
-    timestamp = Column(DateTime, nullable=False)
-    __table_args__ = (UniqueConstraint('show_id', 'season', 'episode', name='_show_episode_uc'),)
-
-
-EP_REGEXP = re.compile(r"(\d+)\s+[Сс]езон\s+(\d+)\s+[Сс]ерия", flags=re.IGNORECASE)
-GOTO_REGEXP = re.compile(r'^goTo\([\'"](.*?)[\'"].*\)$', flags=re.IGNORECASE)
-
-
-class LostFilmParser(object):
-    @staticmethod
-    def parse_shows_page(html):
-        shows_json = json.loads(html)
-        if 'result' in shows_json and shows_json['result'] == 'ok':
-            shows = list()
-            shows_data = shows_json['data']
-            for item in shows_data:
-                shows.append({
-                    'show_id': int(item['id']),
-                    'titles': [item['title'], item['title_orig']],
-                    'url': item['link']
-                })
-
-            log.debug("{0:d} show(s) are found".format(len(shows)))
-            return shows
-
-        return None
-
-    @staticmethod
-    def parse_episodes_page(html):
-
-        category_tree = BeautifulSoup(html, 'html.parser')
-        seasons_node = category_tree.find('div', class_='series-block')
-        if not seasons_node:
-            raise Exception('Node <div class=`series-block`> are not found')
-
-        entries = list()
-
-        season_nodes = seasons_node.find_all('table', class_='movie-parts-list')
-        for season_node in season_nodes:
-            episode_nodes = season_node.find_all('tr')
-            for episode_node in episode_nodes:
-                available = True
-                row_class = episode_node.get('class')
-                if row_class:
-                    available = 'not-available' not in row_class
-
-                ep_node = episode_node.find('td', class_='beta')
-                if not ep_node:
-                    continue
-
-                ep_match = EP_REGEXP.search(ep_node.get_text())
-                if not ep_match:
-                    continue
-
-                season = int(ep_match.group(1))
-                episode = int(ep_match.group(2))
-
-                onclick = ep_node.get('onclick')
-                goto_match = GOTO_REGEXP.search(onclick)
-                if not goto_match:
-                    continue
-
-                episode_title = None
-                title_node = episode_node.find('td', class_='gamma')
-                if title_node:
-                    episode_title = title_node.get_text()
-                    lines = episode_title.splitlines()
-                    episode_titles = list()
-                    for line in lines:
-                        line = line.strip(' \t\r\n')
-                        if len(line) > 0:
-                            episode_titles.append(line)
-                    episode_title = ' / '.join(x for x in episode_titles)
-
-                episode_link = goto_match.group(1)
-
-                entries.append({
-                    'available': available,
-                    'season': season,
-                    'episode': episode,
-                    'title': episode_title,
-                    'url': episode_link
-                })
-
-        return entries
-
-    @staticmethod
-    def parse_episode_page(html):
-        episode_tree = BeautifulSoup(html, 'html.parser')
-        overlay_node = episode_tree.find('div', class_='overlay-pane')
-        if not overlay_node:
-            raise Exception('Node <div class=`overlay-pane`> are not found')
-
-        button_node = overlay_node.find('div', class_='external-btn', onclick=PLAY_EPISODE_REGEXP)
-        if not button_node:
-            raise Exception('Node <div class=`external-btn`> are not found')
-
-        onclick_match = PLAY_EPISODE_REGEXP.search(button_node.get('onclick'))
-        if not onclick_match:
-            raise Exception('Node <div class=`external-btn`> have invalid `onclick` attribute')
-
-        show_id = onclick_match.group(1)
-        season = onclick_match.group(2)
-        episode = onclick_match.group(3)
-        download_url = "http://lostfilm.tv/v_search.php?c={0}&s={1}&e={2}".format(show_id, season, episode)
-
-        return {
-            'show_id': show_id,
-            'season': season,
-            'episode': episode,
-            'download_url': download_url
-        }
-
-    @staticmethod
-    def parse_torrents_page(html):
-        torrents_tree = BeautifulSoup(html, 'html.parser')
-        torrents_list_node = torrents_tree.find('div', class_='inner-box--list')
-        if not torrents_list_node:
-            raise Exception('Node <div class=`inner-box--list`> are not found')
-
-        result = list()
-        item_nodes = torrents_list_node.find_all('div', class_='inner-box--item')
-        for item_node in item_nodes:
-            link_node = item_node.find('a')
-            if link_node:
-                torrent_link = link_node.get('href')
-                description_text = link_node.get_text()
-
-                result.append({
-                    'title': description_text,
-                    'url': torrent_link
-                })
-
-        return result
+    updated_at = Column(DateTime, nullable=False)
+    __table_args__ = (UniqueConstraint('show_id', 'season', 'episode', name='_uc_show_episode'),)
 
 
 class LostFilmDatabase(object):
     @staticmethod
     def shows_timestamp(db_session):
-        shows_timestamp = db_session.query(func.min(DbLostFilmShow.updated_at)).scalar() or None
-        return shows_timestamp
+        timestamp = db_session.query(func.min(DbLostFilmShow.updated_at)).scalar() or None
+        return timestamp
 
     @staticmethod
     def shows_count(db_session):
@@ -389,12 +490,13 @@ class LostFilmDatabase(object):
         if shows and len(shows) > 0:
             now = datetime.now()
             for show in shows:
-                db_show = DbLostFilmShow(id=show['show_id'], title=show['titles'][0], url=show['url'], updated_at=now)
+                db_show = DbLostFilmShow(id=show.id, slug=show.slug, title=show.title, updated_at=now)
                 db_session.add(db_show)
 
-                for index, item in enumerate(show['titles'][1:], start=1):
-                    alternate_name = DbLostFilmShowAlternateName(show_id=show['show_id'], title=item)
-                    db_session.add(alternate_name)
+                if show.alternate_titles:
+                    for alternate_title in show.alternate_titles:
+                        db_alternate_title = DbLostFilmShowAlternateName(show_id=show.id, title=alternate_title)
+                        db_session.add(db_alternate_title)
 
             db_session.commit()
 
@@ -404,20 +506,19 @@ class LostFilmDatabase(object):
 
         db_shows = db_session.query(DbLostFilmShow).all()
         for db_show in db_shows:
-            titles = list()
-            titles.append(db_show.title)
-
+            alternate_titles = list()
             db_alternate_names = db_session.query(DbLostFilmShowAlternateName).filter(
                 DbLostFilmShowAlternateName.show_id == db_show.id).all()
             if db_alternate_names and len(db_alternate_names) > 0:
                 for db_alternate_name in db_alternate_names:
-                    titles.append(db_alternate_name.title)
+                    alternate_titles.append(db_alternate_name.title)
 
-            shows.append({
-                'show_id': db_show.id,
-                'titles': titles,
-                'url': db_show.url
-            })
+            shows.append(LostFilmShow(
+                id_=db_show.id,
+                slug=db_show.slug,
+                title=db_show.title,
+                alternate_titles=alternate_titles
+            ))
 
         return shows
 
@@ -425,20 +526,19 @@ class LostFilmDatabase(object):
     def get_show_by_id(show_id, db_session):
         db_show = db_session.query(DbLostFilmShow).filter(DbLostFilmShow.id == show_id).first()
         if db_show:
-            titles = list()
-            titles.append(db_show.title)
-
+            alternate_titles = list()
             db_alternate_names = db_session.query(DbLostFilmShowAlternateName).filter(
                 DbLostFilmShowAlternateName.show_id == db_show.id).all()
             if db_alternate_names and len(db_alternate_names) > 0:
                 for db_alternate_name in db_alternate_names:
-                    titles.append(db_alternate_name.title)
+                    alternate_titles.append(db_alternate_name.title)
 
-            return {
-                'show_id': db_show.id,
-                'titles': titles,
-                'url': db_show.url
-            }
+            return LostFilmShow(
+                id_=db_show.id,
+                slug=db_show.slug,
+                title=db_show.title,
+                alternate_titles=alternate_titles
+            )
 
         return None
 
@@ -456,29 +556,64 @@ class LostFilmDatabase(object):
         return None
 
     @staticmethod
-    def find_episode(show_id, season, episode, db_session):
+    def show_episodes_timestamp(db_session, show_id):
+        timestamp = db_session.query(func.min(DbLostFilmEpisode.updated_at)).filter(
+            DbLostFilmEpisode.show_id == show_id).scalar() or None
+        return timestamp
+
+    @staticmethod
+    def clear_show_episodes(db_session, show_id):
+        db_session.query(DbLostFilmEpisode).filter(DbLostFilmEpisode.show_id == show_id).delete()
+        db_session.commit()
+
+    @staticmethod
+    def find_show_episode(show_id, season, episode, db_session):
         return db_session.query(DbLostFilmEpisode).filter(
             DbLostFilmEpisode.show_id == show_id,
             DbLostFilmEpisode.season == season,
             DbLostFilmEpisode.episode == episode).first()
 
+    # @staticmethod
+    # def insert_show_episode(show_id, season, episode, title, db_session):
+    #     db_episode = LostFilmDatabase.find_show_episode(show_id, season, episode, db_session)
+    #     now = datetime.now()
+    #     if not db_episode:
+    #         db_episode = DbLostFilmEpisode(
+    #             show_id=show_id,
+    #             season=season,
+    #             episode=episode)
+    #     db_episode.title = title
+    #     db_episode.timestamp = now
+    #
+    #     db_session.add(db_episode)
+    #     db_session.commit()
+    #
+    #     return db_episode
+
     @staticmethod
-    def insert_episode(show_id, season, episode, title, url, db_session):
-        db_episode = LostFilmDatabase.find_episode(show_id, season, episode, db_session)
-        now = datetime.now()
-        if not db_episode:
-            db_episode = DbLostFilmEpisode(
-                show_id=show_id,
-                season=season,
-                episode=episode)
-        db_episode.title = title
-        db_episode.url = url
-        db_episode.timestamp = now
+    def update_show_episodes(show_id, episodes, db_session):
+        # Clear database
+        LostFilmDatabase.clear_show_episodes(db_session, show_id)
 
-        db_session.add(db_episode)
-        db_session.commit()
+        # Insert new rows
+        if episodes and len(episodes) > 0:
+            now = datetime.now()
+            for episode in episodes:
+                if episode.show_id != show_id:
+                    continue
 
-        return db_episode
+                db_episode = DbLostFilmEpisode(
+                    show_id=show_id,
+                    season=episode.season,
+                    episode=episode.episode,
+                    title=episode.title,
+                    updated_at=now
+                )
+                db_session.add(db_episode)
+
+            db_session.commit()
+
+# endregion
 
 
 EPISODE_URL_REGEXP = re.compile(
@@ -493,6 +628,88 @@ REPLACE_LOCATION_REGEXP = re.compile(r'location\.replace\([\'"](.+?)[\'"]\);', f
 SEARCH_REGEXP = re.compile(r'^(.*?)\s*s(\d+?)e(\d+?)$', flags=re.IGNORECASE)
 
 
+class LostFilm(object):
+    @staticmethod
+    def get_seasons_url(show_slug):
+        return '{0}/series/{1}/seasons'.format(BASE_URL, show_slug)
+
+    @staticmethod
+    def get_episode_url(show_slug, season_number, episode_number):
+        return '{0}/series/{1}/season_{2}/episode_{3}'.format(
+            BASE_URL,
+            show_slug,
+            season_number,
+            episode_number
+        )
+
+    @staticmethod
+    def get_episode_torrents_url(show_id, season_number, episode_number):
+        return '{0}/v_search.php?c={1}&s={2}&e={3}'.format(
+            BASE_URL,
+            show_id,
+            season_number,
+            episode_number
+        )
+
+    @staticmethod
+    def _get_response(requests_, url):
+        response = requests_.get(url)
+        content = response.content
+
+        html = content.decode(response.encoding)
+        match = REPLACE_LOCATION_REGEXP.search(html)
+        if match:
+            redirect_url = match.group(1)
+            redirect_url = process_url(redirect_url, response.url)
+            log.debug("`location.replace(...)` has been detected! Redirecting from `{0}` to `{1}`...".format(
+                url, redirect_url))
+            response = requests_.get(redirect_url)
+
+        return response
+
+    @staticmethod
+    def get_shows(requests_):
+        step = 10
+        total = 0
+
+        shows = list()
+        while True:
+            payload = {
+                'act': 'serial',
+                'type': 'search',
+                'o': total,  # offset
+                's': 2,  # alphabetical sorting
+                't': 0  # all shows
+            }
+
+            count = 0
+            response = LostFilmApi.post(requests_, payload)
+            parsed_shows = LostFilmParser.parse_shows_json(response.text)
+            if parsed_shows:
+                count = len(parsed_shows)
+                for show in parsed_shows:
+                    shows.append(show)
+
+            total += count
+            if count < step:
+                break
+
+        return shows
+
+    @staticmethod
+    def get_show_episodes(show_slug, requests_):
+        url = LostFilm.get_seasons_url(show_slug)
+        response = requests_.get(url)
+        html = response.content
+        return LostFilmParser.parse_seasons_page(html)
+
+    @staticmethod
+    def get_episode_torrents(show_id, season, episode, requests_):
+        torrents_url = LostFilm.get_episode_torrents_url(show_id, season, episode)
+        response = LostFilm._get_response(requests_, torrents_url)
+        return LostFilmParser.parse_torrents_page(response.content)
+
+
 class LostFilmPlugin(object):
     """
         LostFilm urlrewrite/search plugin.
@@ -500,10 +717,8 @@ class LostFilmPlugin(object):
         Example::
 
           lostfilm:
-            regexp: '1080p'
+            label: '1080'  # SD / 1080 / MP4 / $regex
         """
-
-    config_ = {}
 
     schema = {
         'oneOf': [
@@ -511,33 +726,22 @@ class LostFilmPlugin(object):
             {
                 'type': 'object',
                 'properties': {
-                    'regexp': {'type': 'string', 'format': 'regex', 'default': '*'}
+                    'label': {'type': 'string', 'format': 'regex', 'default': '*'}
                 },
                 'additionalProperties': False
             }
         ]
     }
 
-    def get_response(self, task, url):
-        response = task.requests.get(url)
-        response_content = response.content
-
-        response_html = response_content.decode(response.encoding)
-        replace_location_match = REPLACE_LOCATION_REGEXP.search(response_html)
-        if replace_location_match:
-            replace_location_url = replace_location_match.group(1)
-            replace_location_url = process_url(replace_location_url, response.url)
-            log.debug("`location.replace(...)` has been detected! Redirecting from `{0}` to `{1}`...".format(
-                url, replace_location_url))
-            response = task.requests.get(replace_location_url)
-
-        return response
+    def __init__(self):
+        self._config = None
 
     def on_task_start(self, task, config):
         if not isinstance(config, dict):
-            log.verbose("Config was not determined - use default.")
+            log.debug("Config was not determined - use default.")
+            self._config = dict()
         else:
-            self.config_ = config
+            self._config = config
 
     def url_rewritable(self, task, entry):
         url = entry['url']
@@ -573,89 +777,42 @@ class LostFilmPlugin(object):
             entry.reject(reject_reason)
             return False
 
-        torrents_url = episode_data['download_url']
-
-        log.debug("Downloading torrents page `{0}`...".format(torrents_url))
+        # log.debug("Downloading torrents page `{0}`...".format(torrents_url))
 
         try:
-            torrents_response = self.get_response(task, torrents_url)
+            torrents = LostFilm.get_episode_torrents(
+                episode_data.show_id,
+                episode_data.season,
+                episode_data.episode,
+                task.requests
+            )
         except requests.RequestException as e:
-            reject_reason = "Error while fetching page `{0}`: {1}".format(torrents_url, e)
+            reject_reason = "Error while getting torrents by `{0}`: {1}".format(episode_url, e)
             log.error(reject_reason)
             entry.reject(reject_reason)
             sleep(3)
             return False
-        torrents_html = torrents_response.content
         sleep(3)
 
-        text_pattern = self.config_.get('regexp', '*')
-        text_regexp = re.compile(text_pattern, flags=re.IGNORECASE)
-
-        log.debug("Parsing torrent links...")
-
-        try:
-            parse_torrents = LostFilmParser.parse_torrents_page(torrents_html)
-        except Exception as e:
-            reject_reason = "Error while parsing torrents page `{0}`: {1}".format(torrents_response.url, e)
-            log.error(reject_reason)
-            entry.reject(reject_reason)
-            return False
-
-        for parse_torrent in parse_torrents:
-            torrent_title = parse_torrent['title']
-            if text_regexp.search(torrent_title):
-                log.debug("Torrent link was accepted! [ regexp: `{0}`, title: `{1}` ]".format(
-                    text_pattern, torrent_title))
-                entry['url'] = parse_torrent['url']
+        label_pattern = self._config.get('label', '*')
+        label_regexp = re.compile(label_pattern, flags=re.IGNORECASE)
+        for torrent in torrents:
+            if label_regexp.search(torrent.label):
+                log.debug("Torrent link was accepted! [ regexp: `{0}`, label: `{1}` ]".format(
+                    label_pattern, torrent.label))
+                entry['url'] = torrent.url
                 return True
             else:
-                log.debug("Torrent link was rejected: [ regexp: `{0}`, title: `{1}` ]".format(
-                    text_pattern, torrent_title))
+                log.debug("Torrent link was rejected: [ regexp: `{0}`, label: `{1}` ]".format(
+                    label_pattern, torrent.label))
 
         reject_reason = "Torrent link was not detected by `{0}` with regexp `{1}`: {2}".format(
-            torrents_response.url, text_pattern, parse_torrents)
+            episode_url.url, label_pattern, torrents)
         log.error(reject_reason)
         entry.reject(reject_reason)
         return False
 
-    def get_shows(self, task):
-        step = 10
-        total = 0
-
-        shows = list()
-        while True:
-            payload = {
-                'act': 'serial',
-                'type': 'search',
-                'o': total,  # offset
-                's': 2,  # alphabetical sorting
-                't': 0  # all shows
-            }
-
-            count = 0
-            try:
-                response = LostFilmApi.requests_post(task.requests, payload)
-            except Exception as e:
-                log.error("Error while fetching shows page: {0}".format(e))
-            else:
-                try:
-                    parsed_shows = LostFilmParser.parse_shows_page(response.text)
-                except Exception as e:
-                    log.error("Error while parsing shows page `{0}`: {1}".format(response.url, e))
-                else:
-                    if parsed_shows:
-                        count = len(parsed_shows)
-                        for show in parsed_shows:
-                            show['url'] = process_url(show['url'], response.url)
-                            shows.append(show)
-
-            total += count
-            if count < step:
-                break
-
-        return shows
-
-    def search_show(self, task, title, db_session):
+    def _search_show(self, task, title, db_session):
         update_required = True
         db_timestamp = LostFilmDatabase.shows_timestamp(db_session)
         if db_timestamp:
@@ -663,13 +820,27 @@ class LostFilmPlugin(object):
             update_required = difference.days > 3
         if update_required:
             log.debug('Update shows...')
-            shows = self.get_shows(task)
+            shows = LostFilm.get_shows(task)
             if shows:
                 log.debug('{0} show(s) received'.format(len(shows)))
                 LostFilmDatabase.update_shows(shows, db_session)
 
         show = LostFilmDatabase.find_show_by_title(title, db_session)
         return show
+
+    def _search_show_episode(self, task, show, season_number, episode_number, db_session):
+        update_required = True
+        db_timestamp = LostFilmDatabase.show_episodes_timestamp(db_session, show.id)
+        if db_timestamp:
+            difference = datetime.now() - db_timestamp
+            update_required = difference.days > 1
+        if update_required:
+            episodes = LostFilm.get_show_episodes(show.slug, task.requests)
+            if episodes:
+                LostFilmDatabase.update_show_episodes(show.id, episodes, db_session)
+
+        episode = LostFilmDatabase.find_show_episode(show.id, season_number, episode_number, db_session)
+        return episode
 
     def search(self, task, entry, config=None):
         entries = set()
@@ -687,55 +858,17 @@ class LostFilmPlugin(object):
 
             log.debug("{0} s{1:02d}e{2:02d}".format(search_title, search_season, search_episode))
 
-            show = self.search_show(task, search_title, db_session)
+            show = self._search_show(task, search_title, db_session)
             if not show:
                 continue
 
-            db_episode = LostFilmDatabase.find_episode(show['show_id'], search_season, search_episode, db_session)
-            if not db_episode:
-                seasons_url = urljoin('{0}/'.format(show['url']), 'seasons')
-                try:
-                    seasons_response = task.requests.get(seasons_url)
-                except requests.RequestException as e:
-                    log.error("Error while fetching page: {0}".format(e))
-                    sleep(3)
-                    continue
-                seasons_html = seasons_response.content
-                sleep(3)
-
-                try:
-                    parse_result = LostFilmParser.parse_episodes_page(seasons_html)
-                except Exception as e:
-                    log.error("Error while parsing episodes page `{0}`: {1}".format(seasons_response.url, e))
-                    continue
-
-                for parse_entry in parse_result:
-                    available = parse_entry['available']
-                    if not available:
-                        continue
-
-                    season = parse_entry['season']
-                    episode = parse_entry['episode']
-
-                    title = "{0} / s{1:02d}e{2:02d}".format(' / '.join(x for x in show['titles']), season, episode)
-                    episode_title = parse_entry['title']
-                    if episode_title and len(episode_title) > 0:
-                        title += ' / ' + episode_title
-
-                    url = parse_entry['url']
-                    url = process_url(url, seasons_response.url)
-                    db_updated_episode = LostFilmDatabase.insert_episode(
-                        show['show_id'], season, episode, title, url, db_session)
-
-                    if season == search_season and episode == search_episode:
-                        db_episode = db_updated_episode
-
-            if db_episode:
+            episode = self._search_show_episode(task, show, search_season, search_episode, db_session)
+            if episode:
                 entry = Entry()
-                entry['title'] = db_episode.title
+                entry['title'] = episode.title
                 # entry['series_season'] = season
                 # entry['series_episode'] = episode
-                entry['url'] = db_episode.url
+                entry['url'] = episode.url
                 # tds = link.parent.parent.parent.find_all('td')
                 # entry['torrent_seeds'] = int(tds[-2].contents[0])
                 # entry['torrent_leeches'] = int(tds[-1].contents[0])

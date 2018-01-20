@@ -1,92 +1,47 @@
 import requests
 import unittest
-try:
-    from urllib.parse import urljoin
-except ImportError:
-    from urlparse import urljoin
 import yaml
 
 import lostfilm
 
 
 class TestLostFilm(unittest.TestCase):
+    _requests = None
+
     def setUp(self):
         with open("test_config.yml", 'r') as stream:
             config = yaml.load(stream)
-            self._username = config['secrets']['lostfilm']['username']
-            self._password = config['secrets']['lostfilm']['password']
 
-    def test_auth(self):
-        auth_handler = lostfilm.LostFilmAuth(self._username, self._password)
-        print(auth_handler.cookies_)
+            requests_ = TestLostFilm._requests
+            if not requests_:
+                lostfilm_config = config['secrets']['lostfilm']
+                username = lostfilm_config['username']
+                password = lostfilm_config['password']
 
-        self.assertRaises(Exception)
+                requests_ = requests.session()
+                requests_.auth = lostfilm.LostFilmAuth(username, password)
 
-    def test_shows_parsing(self):
-        step = 10
-        total = 0
+                TestLostFilm._requests = requests_
 
-        total_shows = list()
-        while True:
-            payload = {
-                'act': 'serial',
-                'type': 'search',
-                'o': total,
-                's': 2,
-                't': 0
-            }
-
-            count = 0
-            try:
-                response = lostfilm.LostFilmApi.requests_post(requests, payload)
-            except Exception as e:
-                print(e)
-            else:
-                try:
-                    shows = lostfilm.LostFilmParser.parse_shows_page(response.text)
-                except Exception as e:
-                    print(e)
-                else:
-                    if shows:
-                        count = len(shows)
-                        for show in shows:
-                            url = show['url']
-                            url = urljoin(response.url, url)
-                            url = urljoin(url + '//', 'seasons')
-                            show['url'] = url
-                            print(' / '.join(x for x in show['titles']))
-                            total_shows.append(show)
-
-            total += count
-            if count < step:
-                break
-        print(len(total_shows))
+    def test_shows(self):
+        shows = lostfilm.LostFilm.get_shows(TestLostFilm._requests)
+        print('{0} show(s)'.format(len(shows)))
+        for show in shows:
+            print(u"[{0}, {1}] {2}".format(show.id, show.slug, show.title))
 
         self.assertRaises(Exception)
 
-    def test_episodes_parsing(self):
-        response = requests.get('http://www.lostfilm.tv/series/Timeless/seasons/')
-        html = response.content
-        entries = lostfilm.LostFilmParser.parse_episodes_page(html)
-        for entry in entries:
-            print(entry)
+    def test_episodes(self):
+        episodes = lostfilm.LostFilm.get_show_episodes('Godless', TestLostFilm._requests)
+        for episode in episodes:
+            print(u"[s{0:02d}e{1:02d}] {2}".format(episode.season, episode.episode, episode.title))
 
         self.assertRaises(Exception)
 
-    def test_episode_parsing(self):
-        response = requests.get('http://www.lostfilm.tv/series/Timeless/season_1/episode_14/')
-        html = response.content
-        entry = lostfilm.LostFilmParser.parse_episode_page(html)
-        print(entry)
-
-        self.assertRaises(Exception)
-
-    def test_torrents_parsing(self):
-        response = requests.get('http://retre.org/v3/?c=291&s=1&e=14&u=821592&h=3616626b4f0c96f12abf700a9b8d9b5e&n=1')
-        html = response.content
-        entries = lostfilm.LostFilmParser.parse_torrents_page(html)
-        for entry in entries:
-            print(entry)
+    def test_episode_torrents(self):
+        torrents = lostfilm.LostFilm.get_episode_torrents(351, 1, 1, TestLostFilm._requests)
+        for torrent in torrents:
+            print(u"[{0}] {1} - {2}".format(torrent.label, torrent.title, torrent.url))
 
         self.assertRaises(Exception)
 
