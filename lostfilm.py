@@ -868,7 +868,7 @@ class LostFilmPlugin(object):
                 entry['title'] = episode.title
                 # entry['series_season'] = season
                 # entry['series_episode'] = episode
-                entry['url'] = episode.url
+                entry['url'] = LostFilm.get_episode_url(show.slug, episode.season, episode.episode)
                 # tds = link.parent.parent.parent.find_all('td')
                 # entry['torrent_seeds'] = int(tds[-2].contents[0])
                 # entry['torrent_leeches'] = int(tds[-1].contents[0])
