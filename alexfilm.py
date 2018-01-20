@@ -7,10 +7,6 @@ import logging
 import re
 from datetime import datetime, timedelta
 from time import sleep
-try:
-    from urllib.parse import urljoin
-except ImportError:
-    from urlparse import urljoin
 
 from bs4 import BeautifulSoup
 from flexget import plugin
@@ -23,6 +19,11 @@ from flexget.utils import requests
 from requests.auth import AuthBase
 from sqlalchemy import Column, Unicode, Integer, DateTime, UniqueConstraint, ForeignKey, func
 from sqlalchemy.types import TypeDecorator, VARCHAR
+
+try:
+    from urllib.parse import urljoin
+except ImportError:
+    from urlparse import urljoin
 
 PLUGIN_NAME = 'alexfilm'
 SCHEMA_VER = 0
@@ -66,9 +67,10 @@ class AlexFilmAccount(Base):
 
 
 class AlexFilmAuth(AuthBase):
-    """Supports downloading of torrents from AlexFilm tracker
-    if you pass cookies (CookieJar) to constructor
-    then authentication will be bypassed and cookies will be just set.
+    """
+    Supports downloading of torrents from AlexFilm tracker
+    if you pass cookies (CookieJar) to constructor then authentication will be bypassed
+    and cookies will be just set.
     """
 
     def try_authenticate(self, payload):

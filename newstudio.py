@@ -66,9 +66,11 @@ class NewStudioAccount(Base):
 
 
 class NewStudioAuth(AuthBase):
-    """Supports downloading of torrents from 'newstudio' tracker
-           if you pass cookies (CookieJar) to constructor then authentication will be bypassed and cookies will be just set
-        """
+    """
+    Supports downloading of torrents from 'newstudio' tracker
+    if you pass cookies (CookieJar) to constructor then authentication will be bypassed
+    and cookies will be just set
+    """
 
     def try_authenticate(self, payload):
         for _ in range(5):

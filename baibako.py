@@ -71,9 +71,11 @@ class BaibakoAccount(Base):
 
 
 class BaibakoAuth(AuthBase):
-    """Supports downloading of torrents from 'baibako' tracker
-           if you pass cookies (CookieJar) to constructor then authentication will be bypassed and cookies will be just set
-        """
+    """
+    Supports downloading of torrents from 'baibako' tracker
+    if you pass cookies (CookieJar) to constructor then authentication will be bypassed
+    and cookies will be just set
+    """
 
     def try_authenticate(self, payload):
         for _ in range(5):
@@ -472,7 +474,7 @@ class BaibakoPlugin(object):
         url_match = TOPIC_ID_REGEXP.search(url)
         if not url_match:
             reject_reason = "Url don't matched: {0}".format(url)
-            log.verbose(reject_reason)
+            log.debug(reject_reason)
             # entry.reject(reject_reason)
             return False
 
