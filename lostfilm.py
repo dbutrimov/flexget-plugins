@@ -820,7 +820,7 @@ class LostFilmPlugin(object):
             update_required = difference.days > 3
         if update_required:
             log.debug('Update shows...')
-            shows = LostFilm.get_shows(task)
+            shows = LostFilm.get_shows(task.requests)
             if shows:
                 log.debug('{0} show(s) received'.format(len(shows)))
                 LostFilmDatabase.update_shows(shows, db_session)

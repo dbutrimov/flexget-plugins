@@ -550,7 +550,7 @@ class BaibakoPlugin(object):
                         entry = Entry()
                         entry['title'] = "{0} / {1} / {2}".format(
                             search_title, episode_id, topic_info.quality)
-                        entry['url'] = Baibako.get_download_url(topic.download_id)
+                        entry['url'] = Baibako.get_download_url(topic.id)
                         # entry['series_season'] = topic_info.season
                         # entry['series_episode'] = topic_info.begin_episode
                         entry['series_id'] = episode_id
