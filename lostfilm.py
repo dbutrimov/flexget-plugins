@@ -145,12 +145,12 @@ class LostFilmAuth(AuthBase):
                 'rem': 1
             }
 
-            self.cookies_ = self.try_authenticate(payload_)
+            self._cookies = self.try_authenticate(payload_)
             if db_session:
                 db_session.add(
                     LostFilmAccount(
                         username=username,
-                        cookies=self.cookies_,
+                        cookies=self._cookies,
                         expiry_time=datetime.now() + timedelta(days=1)))
                 db_session.commit()
                 # else:
@@ -158,14 +158,15 @@ class LostFilmAuth(AuthBase):
                 #         'db_session can not be None if cookies is None')
         else:
             log.debug('Using previously saved cookie.')
-            self.cookies_ = cookies
+            self._cookies = cookies
 
     def __call__(self, request):
         """
         :type request: requests.Request
         :rtype: requests.Request
         """
-        request.prepare_cookies(self.cookies_)
+        # request.prepare_cookies(self._cookies)
+        request.headers['Cookie'] = '; '.join('{0}={1}'.format(key, val) for key, val in self._cookies.items())
         return request
 
 
