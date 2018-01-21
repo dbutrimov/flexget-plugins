@@ -697,6 +697,13 @@ class LostFilm(object):
         return shows
 
     @staticmethod
+    def get_show_episode(show_slug, season, episode, requests_):
+        url = LostFilm.get_episode_url(show_slug, season, episode)
+        response = requests_.get(url)
+        html = response.content
+        return LostFilmParser.parse_episode_page(html)
+
+    @staticmethod
     def get_show_episodes(show_slug, requests_):
         url = LostFilm.get_seasons_url(show_slug)
         response = requests_.get(url)

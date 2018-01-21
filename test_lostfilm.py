@@ -31,15 +31,27 @@ class TestLostFilm(unittest.TestCase):
 
         self.assertRaises(Exception)
 
+    def test_episode(self):
+        episode = lostfilm.LostFilm.get_show_episode('The_Blacklist', 5, 11,  TestLostFilm._requests)
+        print(u"[{0} - s{1:02d}e{2:02d}] {3}".format(episode.show_id, episode.season, episode.episode, episode.title))
+
+        torrents = lostfilm.LostFilm.get_episode_torrents(
+            episode.show_id, episode.season, episode.episode, TestLostFilm._requests)
+        for torrent in torrents:
+            print(u"[{0}] {1} - {2}".format(torrent.label, torrent.title, torrent.url))
+
+        self.assertRaises(Exception)
+
     def test_episodes(self):
         episodes = lostfilm.LostFilm.get_show_episodes('Godless', TestLostFilm._requests)
         for episode in episodes:
-            print(u"[s{0:02d}e{1:02d}] {2}".format(episode.season, episode.episode, episode.title))
+            print(u"[{0} - s{1:02d}e{2:02d}] {3}".format(
+                episode.show_id, episode.season, episode.episode, episode.title))
 
         self.assertRaises(Exception)
 
     def test_episode_torrents(self):
-        torrents = lostfilm.LostFilm.get_episode_torrents(351, 1, 1, TestLostFilm._requests)
+        torrents = lostfilm.LostFilm.get_episode_torrents(214, 5, 11, TestLostFilm._requests)
         for torrent in torrents:
             print(u"[{0}] {1} - {2}".format(torrent.label, torrent.title, torrent.url))
 
