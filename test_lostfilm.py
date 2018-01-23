@@ -18,7 +18,7 @@ class TestLostFilm(unittest.TestCase):
                 username = lostfilm_config['username']
                 password = lostfilm_config['password']
 
-                requests_ = requests.session()
+                requests_ = requests.Session()
                 requests_.auth = lostfilm.LostFilmAuth(username, password)
 
                 TestLostFilm._requests = requests_
@@ -32,18 +32,18 @@ class TestLostFilm(unittest.TestCase):
         self.assertRaises(Exception)
 
     def test_episode(self):
-        episode = lostfilm.LostFilm.get_show_episode('The_Blacklist', 5, 11,  TestLostFilm._requests)
+        episode = lostfilm.LostFilm.get_show_episode(TestLostFilm._requests, 'The_Blacklist', 5, 11)
         print(u"[{0} - s{1:02d}e{2:02d}] {3}".format(episode.show_id, episode.season, episode.episode, episode.title))
 
         torrents = lostfilm.LostFilm.get_episode_torrents(
-            episode.show_id, episode.season, episode.episode, TestLostFilm._requests)
+            TestLostFilm._requests, episode.show_id, episode.season, episode.episode)
         for torrent in torrents:
             print(u"[{0}] {1} - {2}".format(torrent.label, torrent.title, torrent.url))
 
         self.assertRaises(Exception)
 
     def test_episodes(self):
-        episodes = lostfilm.LostFilm.get_show_episodes('Godless', TestLostFilm._requests)
+        episodes = lostfilm.LostFilm.get_show_episodes(TestLostFilm._requests, 'Godless')
         for episode in episodes:
             print(u"[{0} - s{1:02d}e{2:02d}] {3}".format(
                 episode.show_id, episode.season, episode.episode, episode.title))
@@ -51,7 +51,7 @@ class TestLostFilm(unittest.TestCase):
         self.assertRaises(Exception)
 
     def test_episode_torrents(self):
-        torrents = lostfilm.LostFilm.get_episode_torrents(214, 5, 11, TestLostFilm._requests)
+        torrents = lostfilm.LostFilm.get_episode_torrents(TestLostFilm._requests, 214, 5, 11)
         for torrent in torrents:
             print(u"[{0}] {1} - {2}".format(torrent.label, torrent.title, torrent.url))
 

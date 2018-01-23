@@ -2,23 +2,26 @@
 from __future__ import unicode_literals, division, absolute_import
 from builtins import *  # pylint: disable=unused-import, redefined-builtin
 
+from typing import Optional, Text, List, Dict
 import json
 import logging
 import re
 from datetime import datetime, timedelta
 from time import sleep
-from bs4 import BeautifulSoup
+import bs4
 from flexget import options
 from flexget import plugin
 from flexget.db_schema import versioned_base
 from flexget.entry import Entry
 from flexget.event import event
 from flexget.terminal import console
-from flexget.manager import Session
+import flexget
+from flexget.task import Task
 from flexget.plugin import PluginError
-from flexget.utils import requests
+import requests
 from requests.auth import AuthBase
 from sqlalchemy import Column, Unicode, Integer, DateTime, UniqueConstraint, ForeignKey, func
+import sqlalchemy.orm
 from sqlalchemy.types import TypeDecorator, VARCHAR
 
 try:
@@ -38,22 +41,14 @@ Base = versioned_base(PLUGIN_NAME, SCHEMA_VER)
 
 
 def process_url(url, base_url):
-    """
-    :type url: str
-    :type base_url: str
-    :rtype: str
-    """
+    # type: (Text, Text) -> Text
     return urljoin(base_url, url)
 
 
 class LostFilmApi(object):
     @staticmethod
     def post(requests_, payload):
-        """
-        :type requests_: requests.Session
-        :type payload: dict
-        :rtype: requests.Response
-        """
+        # type: (requests.Session, Dict) -> requests.Response
         response = requests_.post(
             API_URL,
             data=payload)
@@ -98,10 +93,7 @@ class LostFilmAuth(AuthBase):
     """
 
     def try_authenticate(self, payload):
-        """
-        :type payload: dict
-        :rtype: dict
-        """
+        # type: (Dict) -> Dict
         for _ in range(5):
             session = requests.Session()
             # session.headers['User-Agent'] = 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_12_1) ' \
@@ -128,12 +120,7 @@ class LostFilmAuth(AuthBase):
         raise PluginError('Unable to obtain cookies from LostFilm. Looks like invalid username or password.')
 
     def __init__(self, username, password, cookies=None, db_session=None):
-        """
-        :type username: str
-        :type password: str
-        :type cookies: dict
-        :type db_session: flexget.manager.Session
-        """
+        # type: (Text, Text, Dict, sqlalchemy.orm.Session) -> None
         if cookies is None:
             log.debug('LostFilm cookie not found. Requesting new one.')
 
@@ -161,10 +148,8 @@ class LostFilmAuth(AuthBase):
             self._cookies = cookies
 
     def __call__(self, request):
-        """
-        :type request: requests.Request
-        :rtype: requests.Request
-        """
+        # type: (requests.Request) -> requests.Request
+
         # request.prepare_cookies(self._cookies)
         request.headers['Cookie'] = '; '.join('{0}={1}'.format(key, val) for key, val in self._cookies.items())
         return request
@@ -190,6 +175,7 @@ class LostFilmAuthPlugin(object):
     auth_cache = {}
 
     def try_find_cookie(self, db_session, username):
+        # type: (sqlalchemy.orm.Session, Text) -> Optional[Dict]
         account = db_session.query(LostFilmAccount).filter(LostFilmAccount.username == username).first()
         if account:
             if account.expiry_time < datetime.now():
@@ -201,6 +187,7 @@ class LostFilmAuthPlugin(object):
             return None
 
     def get_auth_handler(self, config):
+        # type: (Dict) -> LostFilmAuth
         username = config.get('username')
         if not username or len(username) <= 0:
             raise PluginError('Username are not configured.')
@@ -208,7 +195,7 @@ class LostFilmAuthPlugin(object):
         if not password or len(password) <= 0:
             raise PluginError('Password are not configured.')
 
-        db_session = Session()
+        db_session = flexget.manager.Session()
         cookies = self.try_find_cookie(db_session, username)
         if username not in self.auth_cache:
             auth_handler = LostFilmAuth(username, password, cookies, db_session)
@@ -235,6 +222,7 @@ GOTO_REGEXP = re.compile(r'^goTo\([\'"](.*?)[\'"].*\)$', flags=re.IGNORECASE)
 # region LostFilmParser
 class ParsingError(Exception):
     def __init__(self, message):
+        # type: (Text) -> None
         self.message = message
 
     def __str__(self):
@@ -246,12 +234,7 @@ class ParsingError(Exception):
 
 class LostFilmShow(object):
     def __init__(self, id_, slug, title, alternate_titles=None):
-        """
-        :type id_: int
-        :type slug: str
-        :type title: str
-        :type alternate_titles: list[str]
-        """
+        # type: (int, Text, Text, List[Text]) -> None
         self.id = id_
         self.slug = slug
         self.title = title
@@ -260,12 +243,7 @@ class LostFilmShow(object):
 
 class LostFilmEpisode(object):
     def __init__(self, show_id, season, episode, title=None):
-        """
-        :type show_id: int
-        :type season: int
-        :type episode: int
-        :type title: str
-        """
+        # type: (int, int, int, Text) -> None
         self.show_id = show_id
         self.season = season
         self.episode = episode
@@ -274,11 +252,7 @@ class LostFilmEpisode(object):
 
 class LostFilmTorrent(object):
     def __init__(self, url, title, label=None):
-        """
-        :type url: str
-        :type title: str
-        :type label: str
-        """
+        # type: (Text, Text, Text) -> None
         self.url = url
         self.title = title
         self.label = label
@@ -287,10 +261,7 @@ class LostFilmTorrent(object):
 class LostFilmParser(object):
     @staticmethod
     def parse_shows_json(text):
-        """
-        :type text: str
-        :rtype: list[LostFilmShow]
-        """
+        # type: (Text) -> List[LostFilmShow]
         json_data = json.loads(text)
         if 'result' not in json_data or json_data['result'] != 'ok':
             raise ParsingError('`result` field is invalid')
@@ -310,10 +281,7 @@ class LostFilmParser(object):
 
     @staticmethod
     def _parse_play_episode_button(node):
-        """
-        :type node: bs4.Tag
-        :rtype: LostFilmEpisode
-        """
+        # type: (bs4.Tag) -> LostFilmEpisode
         button_node = node.find('div', class_='external-btn', onclick=PLAY_EPISODE_REGEXP)
         if not button_node:
             raise ParsingError('Node <div class=`external-btn`> are not found')
@@ -330,19 +298,12 @@ class LostFilmParser(object):
 
     @staticmethod
     def _strip_string(value):
-        """
-        :type value: str
-        :rtype: str
-        """
+        # type:(Text) -> Text
         return value.strip(' \t\r\n')
 
     @staticmethod
     def _to_single_line(text, separator=' / '):
-        """
-        :type text: str
-        :type separator: str
-        :rtype: str
-        """
+        # type: (Text, Text) -> Text
         input_lines = text.splitlines()
         lines = list()
         for line in input_lines:
@@ -354,11 +315,8 @@ class LostFilmParser(object):
 
     @staticmethod
     def parse_seasons_page(html):
-        """
-        :type html: str
-        :rtype: list[LostFilmEpisode]
-        """
-        category_tree = BeautifulSoup(html, 'html.parser')
+        # type: (Text) -> List[LostFilmEpisode]
+        category_tree = bs4.BeautifulSoup(html, 'html.parser')
         seasons_node = category_tree.find('div', class_='series-block')
         if not seasons_node:
             raise ParsingError('Node <div class=`series-block`> are not found')
@@ -390,11 +348,8 @@ class LostFilmParser(object):
 
     @staticmethod
     def parse_episode_page(html):
-        """
-        :type html: str
-        :rtype: LostFilmEpisode
-        """
-        episode_tree = BeautifulSoup(html, 'html.parser')
+        # type: (Text) -> LostFilmEpisode
+        episode_tree = bs4.BeautifulSoup(html, 'html.parser')
         overlay_node = episode_tree.find('div', class_='overlay-pane')
         if not overlay_node:
             raise ParsingError('Node <div class=`overlay-pane`> are not found')
@@ -409,11 +364,8 @@ class LostFilmParser(object):
 
     @staticmethod
     def parse_torrents_page(html):
-        """
-        :type html: str
-        :rtype: list[LostFilmTorrent]
-        """
-        torrents_tree = BeautifulSoup(html, 'html.parser')
+        # type: (Text) -> List[LostFilmTorrent]
+        torrents_tree = bs4.BeautifulSoup(html, 'html.parser')
         torrents_list_node = torrents_tree.find('div', class_='inner-box--list')
         if not torrents_list_node:
             raise ParsingError('Node <div class=`inner-box--list`> are not found')
@@ -469,21 +421,26 @@ class DbLostFilmEpisode(Base):
 class LostFilmDatabase(object):
     @staticmethod
     def shows_timestamp(db_session):
+        # type: (sqlalchemy.orm.Session) -> datetime
         timestamp = db_session.query(func.min(DbLostFilmShow.updated_at)).scalar() or None
         return timestamp
 
     @staticmethod
     def shows_count(db_session):
+        # type: (sqlalchemy.orm.Session) -> int
         return db_session.query(DbLostFilmShow).count()
 
     @staticmethod
     def clear_shows(db_session):
+        # type: (sqlalchemy.orm.Session) -> None
         db_session.query(DbLostFilmShowAlternateName).delete()
         db_session.query(DbLostFilmShow).delete()
         db_session.commit()
 
     @staticmethod
-    def update_shows(shows, db_session):
+    def update_shows(db_session, shows):
+        # type: (sqlalchemy.orm.Session, List[LostFilmShow]) -> None
+
         # Clear database
         LostFilmDatabase.clear_shows(db_session)
 
@@ -503,6 +460,7 @@ class LostFilmDatabase(object):
 
     @staticmethod
     def get_shows(db_session):
+        # type: (sqlalchemy.orm.Session) -> List[LostFilmShow]
         shows = list()
 
         db_shows = db_session.query(DbLostFilmShow).all()
@@ -524,7 +482,8 @@ class LostFilmDatabase(object):
         return shows
 
     @staticmethod
-    def get_show_by_id(show_id, db_session):
+    def get_show_by_id(db_session, show_id):
+        # type: (sqlalchemy.orm.Session, int) -> Optional[LostFilmShow]
         db_show = db_session.query(DbLostFilmShow).filter(DbLostFilmShow.id == show_id).first()
         if db_show:
             alternate_titles = list()
@@ -544,55 +503,48 @@ class LostFilmDatabase(object):
         return None
 
     @staticmethod
-    def find_show_by_title(title, db_session):
+    def find_show_by_title(db_session, title):
+        # type: (sqlalchemy.orm.Session, Text) -> Optional[LostFilmShow]
         db_show = db_session.query(DbLostFilmShow).filter(DbLostFilmShow.title == title).first()
         if db_show:
-            return LostFilmDatabase.get_show_by_id(db_show.id, db_session)
+            return LostFilmDatabase.get_show_by_id(db_session, db_show.id)
 
         db_alternate_name = db_session.query(DbLostFilmShowAlternateName).filter(
             DbLostFilmShowAlternateName.title == title).first()
         if db_alternate_name:
-            return LostFilmDatabase.get_show_by_id(db_alternate_name.show_id, db_session)
+            return LostFilmDatabase.get_show_by_id(db_session, db_alternate_name.show_id)
 
         return None
 
     @staticmethod
     def show_episodes_timestamp(db_session, show_id):
+        # type: (sqlalchemy.orm.Session, int) -> datetime
         timestamp = db_session.query(func.min(DbLostFilmEpisode.updated_at)).filter(
             DbLostFilmEpisode.show_id == show_id).scalar() or None
         return timestamp
 
     @staticmethod
     def clear_show_episodes(db_session, show_id):
+        # type: (sqlalchemy.orm.Session, int) -> None
         db_session.query(DbLostFilmEpisode).filter(DbLostFilmEpisode.show_id == show_id).delete()
         db_session.commit()
 
     @staticmethod
-    def find_show_episode(show_id, season, episode, db_session):
-        return db_session.query(DbLostFilmEpisode).filter(
+    def find_show_episode(db_session, show_id, season, episode):
+        # type: (sqlalchemy.orm.Session, int, int, int) -> Optional[LostFilmEpisode]
+        db_episode = db_session.query(DbLostFilmEpisode).filter(
             DbLostFilmEpisode.show_id == show_id,
             DbLostFilmEpisode.season == season,
             DbLostFilmEpisode.episode == episode).first()
+        if db_episode:
+            return LostFilmEpisode(db_episode.show_id, db_episode.season, db_episode.episode, db_episode.title)
 
-    # @staticmethod
-    # def insert_show_episode(show_id, season, episode, title, db_session):
-    #     db_episode = LostFilmDatabase.find_show_episode(show_id, season, episode, db_session)
-    #     now = datetime.now()
-    #     if not db_episode:
-    #         db_episode = DbLostFilmEpisode(
-    #             show_id=show_id,
-    #             season=season,
-    #             episode=episode)
-    #     db_episode.title = title
-    #     db_episode.timestamp = now
-    #
-    #     db_session.add(db_episode)
-    #     db_session.commit()
-    #
-    #     return db_episode
+        return None
 
     @staticmethod
-    def update_show_episodes(show_id, episodes, db_session):
+    def update_show_episodes(db_session, show_id, episodes):
+        # type: (sqlalchemy.orm.Session, int, List[LostFilmEpisode]) -> None
+
         # Clear database
         LostFilmDatabase.clear_show_episodes(db_session, show_id)
 
@@ -618,7 +570,7 @@ class LostFilmDatabase(object):
 
 
 EPISODE_URL_REGEXP = re.compile(
-    r'^https?://(?:www\.)?lostfilm\.tv/series/([^/]+?)/season_(\d+)/episode_(\d+).*$',
+    r'/series/([^/]+?)/season_(\d+)/episode_(\d+)',
     flags=re.IGNORECASE)
 PLAY_EPISODE_REGEXP = re.compile(
     r'PlayEpisode\(\\?[\'"](.+?)\\?[\'"],\s*\\?[\'"](.+?)\\?[\'"],\s*\\?[\'"](.+?)\\?[\'"]\)',
@@ -632,28 +584,32 @@ SEARCH_REGEXP = re.compile(r'^(.*?)\s*s(\d+?)e(\d+?)$', flags=re.IGNORECASE)
 class LostFilm(object):
     @staticmethod
     def get_seasons_url(show_slug):
+        # type: (Text) -> Text
         return '{0}/series/{1}/seasons'.format(BASE_URL, show_slug)
 
     @staticmethod
-    def get_episode_url(show_slug, season_number, episode_number):
+    def get_episode_url(show_slug, season, episode):
+        # type: (Text, int, int) -> Text
         return '{0}/series/{1}/season_{2}/episode_{3}'.format(
             BASE_URL,
             show_slug,
-            season_number,
-            episode_number
+            season,
+            episode
         )
 
     @staticmethod
-    def get_episode_torrents_url(show_id, season_number, episode_number):
+    def get_episode_torrents_url(show_id, season, episode):
+        # type: (int, int, int) -> Text
         return '{0}/v_search.php?c={1}&s={2}&e={3}'.format(
             BASE_URL,
             show_id,
-            season_number,
-            episode_number
+            season,
+            episode
         )
 
     @staticmethod
     def _get_response(requests_, url):
+        # type: (requests.Session, Text) -> requests.Response
         response = requests_.get(url)
         content = response.content
 
@@ -670,6 +626,7 @@ class LostFilm(object):
 
     @staticmethod
     def get_shows(requests_):
+        # type: (requests.Session) -> List[LostFilmShow]
         step = 10
         total = 0
 
@@ -698,21 +655,22 @@ class LostFilm(object):
         return shows
 
     @staticmethod
-    def get_show_episode(show_slug, season, episode, requests_):
+    def get_show_episode(requests_, show_slug, season, episode):
+        # type: (requests.Session, Text, int, int) -> LostFilmEpisode
         url = LostFilm.get_episode_url(show_slug, season, episode)
         response = requests_.get(url)
-        html = response.content
-        return LostFilmParser.parse_episode_page(html)
+        return LostFilmParser.parse_episode_page(response.content)
 
     @staticmethod
-    def get_show_episodes(show_slug, requests_):
+    def get_show_episodes(requests_, show_slug):
+        # type: (requests.Session, Text) -> List[LostFilmEpisode]
         url = LostFilm.get_seasons_url(show_slug)
         response = requests_.get(url)
-        html = response.content
-        return LostFilmParser.parse_seasons_page(html)
+        return LostFilmParser.parse_seasons_page(response.content)
 
     @staticmethod
-    def get_episode_torrents(show_id, season, episode, requests_):
+    def get_episode_torrents(requests_, show_id, season, episode):
+        # type: (requests.Session, int, int, int) -> List[LostFilmTorrent]
         torrents_url = LostFilm.get_episode_torrents_url(show_id, season, episode)
         response = LostFilm._get_response(requests_, torrents_url)
         return LostFilmParser.parse_torrents_page(response.content)
@@ -753,49 +711,45 @@ class LostFilmPlugin(object):
 
     def url_rewritable(self, task, entry):
         url = entry['url']
-        if EPISODE_URL_REGEXP.match(url):
+        match = EPISODE_URL_REGEXP.search(url)
+        if match:
             return True
 
         return False
 
     def url_rewrite(self, task, entry):
-        episode_url = entry['url']
+        url = entry['url']
 
-        log.debug("Starting with url `{0}`...".format(episode_url))
-        log.debug("Fetching episode page `{0}`...".format(episode_url))
+        match = EPISODE_URL_REGEXP.search(url)
+        if not match:
+            reject_reason = "Invalid url format: `{0}`".format(url)
+            log.error(reject_reason)
+            entry.reject(reject_reason)
+            return False
+
+        show_slug = match.group(1)
+        season_number = int(match.group(2))
+        episode_number = int(match.group(3))
 
         try:
-            episode_response = task.requests.get(episode_url)
-        except requests.RequestException as e:
-            reject_reason = "Error while fetching page `{0}`: {1}".format(episode_url, e)
+            episode = LostFilm.get_show_episode(task.requests, show_slug, season_number, episode_number)
+        except Exception as e:
+            reject_reason = "Error while getting episode by `{0}`: {1}".format(url, e)
             log.error(reject_reason)
             entry.reject(reject_reason)
             sleep(3)
             return False
-        episode_html = episode_response.content
         sleep(3)
-
-        log.debug("Parsing episode page `{0}`...".format(episode_url))
-
-        try:
-            episode_data = LostFilmParser.parse_episode_page(episode_html)
-        except Exception as e:
-            reject_reason = "Error while parsing episode page `{0}`: {1}".format(episode_url, e)
-            log.error(reject_reason)
-            entry.reject(reject_reason)
-            return False
-
-        # log.debug("Downloading torrents page `{0}`...".format(torrents_url))
 
         try:
             torrents = LostFilm.get_episode_torrents(
-                episode_data.show_id,
-                episode_data.season,
-                episode_data.episode,
-                task.requests
+                task.requests,
+                episode.show_id,
+                episode.season,
+                episode.episode
             )
-        except requests.RequestException as e:
-            reject_reason = "Error while getting torrents by `{0}`: {1}".format(episode_url, e)
+        except Exception as e:
+            reject_reason = "Error while getting torrents by `{0}`: {1}".format(url, e)
             log.error(reject_reason)
             entry.reject(reject_reason)
             sleep(3)
@@ -815,12 +769,13 @@ class LostFilmPlugin(object):
                     label_pattern, torrent.label))
 
         reject_reason = "Torrent link was not detected by `{0}` with regexp `{1}`: {2}".format(
-            episode_url.url, label_pattern, torrents)
+            url.url, label_pattern, torrents)
         log.error(reject_reason)
         entry.reject(reject_reason)
         return False
 
-    def _search_show(self, task, title, db_session):
+    def _search_show(self, task, db_session, title):
+        # type: (Task, sqlalchemy.orm.Session, Text) -> LostFilmShow
         update_required = True
         db_timestamp = LostFilmDatabase.shows_timestamp(db_session)
         if db_timestamp:
@@ -831,29 +786,28 @@ class LostFilmPlugin(object):
             shows = LostFilm.get_shows(task.requests)
             if shows:
                 log.debug('{0} show(s) received'.format(len(shows)))
-                LostFilmDatabase.update_shows(shows, db_session)
+                LostFilmDatabase.update_shows(db_session, shows)
 
-        show = LostFilmDatabase.find_show_by_title(title, db_session)
-        return show
+        return LostFilmDatabase.find_show_by_title(db_session, title)
 
-    def _search_show_episode(self, task, show, season_number, episode_number, db_session):
+    def _search_show_episode(self, task, db_session, show, season, episode):
+        # type: (Task, sqlalchemy.orm.Session, LostFilmShow, int, int) -> Optional[LostFilmEpisode]
         update_required = True
         db_timestamp = LostFilmDatabase.show_episodes_timestamp(db_session, show.id)
         if db_timestamp:
             difference = datetime.now() - db_timestamp
             update_required = difference.days > 1
         if update_required:
-            episodes = LostFilm.get_show_episodes(show.slug, task.requests)
+            episodes = LostFilm.get_show_episodes(task.requests, show.slug)
             if episodes:
-                LostFilmDatabase.update_show_episodes(show.id, episodes, db_session)
+                LostFilmDatabase.update_show_episodes(db_session, show.id, episodes)
 
-        episode = LostFilmDatabase.find_show_episode(show.id, season_number, episode_number, db_session)
-        return episode
+        return LostFilmDatabase.find_show_episode(db_session, show.id, season, episode)
 
     def search(self, task, entry, config=None):
         entries = set()
 
-        db_session = Session()
+        db_session = flexget.manager.Session()
 
         for search_string in entry.get('search_strings', [entry['title']]):
             search_match = SEARCH_REGEXP.search(search_string)
@@ -866,11 +820,11 @@ class LostFilmPlugin(object):
 
             log.debug("{0} s{1:02d}e{2:02d}".format(search_title, search_season, search_episode))
 
-            show = self._search_show(task, search_title, db_session)
+            show = self._search_show(task, db_session, search_title)
             if not show:
                 continue
 
-            episode = self._search_show_episode(task, show, search_season, search_episode, db_session)
+            episode = self._search_show_episode(task, db_session, show, search_season, search_episode)
             if episode:
                 entry = Entry()
                 entry['title'] = episode.title
@@ -896,7 +850,7 @@ class LostFilmPlugin(object):
 
 
 def reset_cache(manager):
-    db_session = Session()
+    db_session = flexget.manager.Session()
     db_session.query(DbLostFilmEpisode).delete()
     db_session.query(DbLostFilmShowAlternateName).delete()
     db_session.query(DbLostFilmShow).delete()
