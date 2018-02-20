@@ -573,7 +573,8 @@ EPISODE_URL_REGEXP = re.compile(
     r'/series/([^/]+?)/season_(\d+)/episode_(\d+)',
     flags=re.IGNORECASE)
 PLAY_EPISODE_REGEXP = re.compile(
-    r'PlayEpisode\(\\?[\'"](.+?)\\?[\'"],\s*\\?[\'"](.+?)\\?[\'"],\s*\\?[\'"](.+?)\\?[\'"]\)',
+    # r'PlayEpisode\(\\?[\'"](.+?)\\?[\'"],\s*\\?[\'"](.+?)\\?[\'"],\s*\\?[\'"](.+?)\\?[\'"]\)',
+    r'PlayEpisode\(\\?[\'"](\d+)(\d{3})(\d{3})\\?[\'"]\)',
     flags=re.IGNORECASE)
 
 REPLACE_LOCATION_REGEXP = re.compile(r'location\.replace\([\'"](.+?)[\'"]\);', flags=re.IGNORECASE)
@@ -600,7 +601,8 @@ class LostFilm(object):
     @staticmethod
     def get_episode_torrents_url(show_id, season, episode):
         # type: (int, int, int) -> Text
-        return '{0}/v_search.php?c={1}&s={2}&e={3}'.format(
+        # return '{0}/v_search.php?c={1}&s={2}&e={3}'.format(
+        return '{0}/v_search.php?a={1}{2:03d}{3:03d}'.format(
             BASE_URL,
             show_id,
             season,
