@@ -175,7 +175,7 @@ FORUM_ID_REGEXP = re.compile(r'serial\.php\?id=(\d+)', flags=re.IGNORECASE)
 TOPIC_ID_REGEXP = re.compile(r'details\.php\?id=(\d+)', flags=re.IGNORECASE)
 
 TOPIC_TITLE_REGEXP = re.compile(
-    r'^([^/]*?)\s*/\s*([^/]*?)\s*/\s*s(\d+)e(\d+)(?:-(\d+))?\s*/\s*([^/]*?)\s*(?:(?:/.*)|$)',
+    r'^(?P<title>[^/]*?)\s*/\s*(?P<title_orig>[^/]*?)\s*/\s*s(?P<season>\d+)(?:e(?P<episode_begin>\d+)(?:-(?P<episode_end>\d+))?)?\s*/\s*(?P<quality>[^/]*?)\s*(?:(?:/.*)|$)',
     flags=re.IGNORECASE)
 
 
@@ -277,21 +277,21 @@ class BaibakoParser(object):
         if not match:
             raise ParsingError("Title `{0}` has invalid format".format(title))
 
-        season = int(match.group(3))
+        season = int(match.group('season'))
 
         try:
-            begin_episode = int(match.group(4))
+            begin_episode = int(match.group('episode_begin'))
         except Exception:
             begin_episode = 0
 
         try:
-            end_episode = int(match.group(5))
+            end_episode = int(match.group('episode_end'))
         except Exception:
             end_episode = begin_episode
 
-        title = match.group(1)
-        alternative_title = match.group(2)
-        quality = match.group(6)
+        title = match.group('title')
+        alternative_title = match.group('title_orig')
+        quality = match.group('quality')
 
         return BaibakoTopicInfo(title, [alternative_title], season, begin_episode, end_episode, quality)
 

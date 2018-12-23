@@ -24,17 +24,20 @@ class TestBaibako(unittest.TestCase):
         self.assertRaises(Exception)
 
     def test_forum_topics(self):
-        topics = baibako.Baibako.get_forum_topics(472, 'all', self._requests)
+        topics = baibako.Baibako.get_forum_topics(1, 'all', self._requests)
         for topic in topics:
             print(u"[{0}] {1}".format(topic.id, topic.title))
 
-            topic_info = baibako.BaibakoParser.parse_topic_title(topic.title)
-            print(u"{0} / {1} / {2} / {3}".format(
-                topic_info.title,
-                topic_info.alternative_titles[0],
-                topic_info.get_episode_id(),
-                topic_info.quality
-            ))
+            try:
+                topic_info = baibako.BaibakoParser.parse_topic_title(topic.title)
+                print(u"{0} / {1} / {2} / {3}".format(
+                    topic_info.title,
+                    topic_info.alternative_titles[0],
+                    topic_info.get_episode_id(),
+                    topic_info.quality
+                ))
+            except Exception as e:
+                print(u"\033[91m[ERROR]\033[0m {0}".format(e.message))
 
         self.assertRaises(Exception)
 
