@@ -2,6 +2,7 @@
 from __future__ import unicode_literals, division, absolute_import
 from builtins import *  # pylint: disable=unused-import, redefined-builtin
 
+import six
 import json
 import logging
 import re
@@ -20,10 +21,10 @@ from requests.auth import AuthBase
 from sqlalchemy import Column, Unicode, Integer, DateTime, UniqueConstraint, ForeignKey, func
 from sqlalchemy.types import TypeDecorator, VARCHAR
 
-try:
-    from urllib.parse import urljoin
-except ImportError:
+if six.PY2:
     from urlparse import urljoin
+elif six.PY3:
+    from urllib.parse import urljoin
 
 PLUGIN_NAME = 'alexfilm'
 SCHEMA_VER = 0
@@ -472,4 +473,4 @@ class AlexFilmPlugin(object):
 @event('plugin.register')
 def register_plugin():
     plugin.register(AlexFilmAuthPlugin, PLUGIN_NAME + '_auth', api_ver=2)
-    plugin.register(AlexFilmPlugin, PLUGIN_NAME, groups=['urlrewriter', 'search'], api_ver=2)
+    plugin.register(AlexFilmPlugin, PLUGIN_NAME, interfaces=['urlrewriter', 'search'], api_ver=2)

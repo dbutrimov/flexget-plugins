@@ -2,6 +2,7 @@
 from __future__ import unicode_literals, division, absolute_import
 from builtins import *  # pylint: disable=unused-import, redefined-builtin
 
+import six
 from typing import Optional, Text, List, Dict
 import json
 import logging
@@ -24,10 +25,10 @@ from sqlalchemy import Column, Unicode, Integer, DateTime, UniqueConstraint, For
 import sqlalchemy.orm
 from sqlalchemy.types import TypeDecorator, VARCHAR
 
-try:
-    from urllib.parse import urljoin
-except ImportError:
+if six.PY2:
     from urlparse import urljoin
+elif six.PY3:
+    from urllib.parse import urljoin
 
 PLUGIN_NAME = 'lostfilm'
 SCHEMA_VER = 0
@@ -876,4 +877,4 @@ def register_plugin():
     subparsers.add_parser('reset_cache', help='Reset the LostFilm cache')
 
     plugin.register(LostFilmAuthPlugin, PLUGIN_NAME + '_auth', api_ver=2)
-    plugin.register(LostFilmPlugin, PLUGIN_NAME, groups=['urlrewriter', 'search'], api_ver=2)
+    plugin.register(LostFilmPlugin, PLUGIN_NAME, interfaces=['urlrewriter', 'search'], api_ver=2)
