@@ -1,6 +1,7 @@
 # -*- coding: utf-8 -*-
+
 from __future__ import unicode_literals, division, absolute_import
-from builtins import *  # pylint: disable=unused-import, redefined-builtin
+from builtins import *  # noqa pylint: disable=unused-import, redefined-builtin
 
 import six
 from typing import Optional, Text, List, Dict
@@ -388,6 +389,8 @@ class LostFilmParser(object):
                 result.append(torrent)
 
         return result
+
+
 # endregion
 
 
@@ -566,6 +569,7 @@ class LostFilmDatabase(object):
                 db_session.add(db_episode)
 
             db_session.commit()
+
 
 # endregion
 
