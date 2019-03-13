@@ -57,6 +57,12 @@ class TestNewStudio(unittest.TestCase):
 
         self.assertRaises(Exception)
 
+    def test_torrent(self):
+        download_url = newstudio.NewStudio.get_download_url(31460)
+        print(download_url)
+
+        self.assertRaises(Exception)
+
 
 if __name__ == '__main__':
     unittest.main()
