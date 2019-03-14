@@ -881,4 +881,4 @@ def register_plugin():
     subparsers.add_parser('reset_cache', help='Reset the LostFilm cache')
 
     plugin.register(LostFilmAuthPlugin, PLUGIN_NAME + '_auth', api_ver=2)
-    plugin.register(LostFilmPlugin, PLUGIN_NAME, interfaces=['urlrewriter', 'search'], api_ver=2)
+    plugin.register(LostFilmPlugin, PLUGIN_NAME, interfaces=['urlrewriter', 'search', 'task'], api_ver=2)
