@@ -17,7 +17,7 @@ from flexget.db_schema import versioned_base
 from flexget.entry import Entry
 from flexget.event import event
 from flexget.terminal import console
-import flexget
+from flexget.manager import Session
 from flexget.task import Task
 from flexget.plugin import PluginError
 import requests
@@ -197,7 +197,7 @@ class LostFilmAuthPlugin(object):
         if not password or len(password) <= 0:
             raise PluginError('Password are not configured.')
 
-        db_session = flexget.manager.Session()
+        db_session = Session()
         cookies = self.try_find_cookie(db_session, username)
         if username not in self.auth_cache:
             auth_handler = LostFilmAuth(username, password, cookies, db_session)
@@ -250,6 +250,9 @@ class LostFilmEpisode(object):
         self.season = season
         self.episode = episode
         self.title = title
+
+    def get_episode_id(self):
+        return 'S{0:02d}E{1:02d}'.format(self.season, self.episode)
 
 
 class LostFilmTorrent(object):
@@ -709,12 +712,11 @@ class LostFilmPlugin(object):
     def __init__(self):
         self._config = None
 
-    def on_task_start(self, task, config):
+    def on_task_start(self, task, config=None):
         if not isinstance(config, dict):
             log.debug("Config was not determined - use default.")
-            self._config = dict()
-        else:
-            self._config = config
+            config = dict()
+        self._config = config
 
     def url_rewritable(self, task, entry):
         url = entry['url']
@@ -812,13 +814,12 @@ class LostFilmPlugin(object):
         return LostFilmDatabase.find_show_episode(db_session, show.id, season, episode)
 
     def search(self, task, entry, config=None):
+        db_session = Session()
         entries = set()
-
-        db_session = flexget.manager.Session()
-
         for search_string in entry.get('search_strings', [entry['title']]):
             search_match = SEARCH_REGEXP.search(search_string)
             if not search_match:
+                log.warn("Invalid search string: {0}".format(search_string))
                 continue
 
             search_title = search_match.group(1)
@@ -829,26 +830,33 @@ class LostFilmPlugin(object):
 
             show = self._search_show(task, db_session, search_title)
             if not show:
+                log.warn("Unknown show: {0}".format(search_title))
                 continue
 
             episode = self._search_show_episode(task, db_session, show, search_season, search_episode)
-            if episode:
-                entry = Entry()
-                entry['title'] = episode.title
-                # entry['series_season'] = season
-                # entry['series_episode'] = episode
-                entry['url'] = LostFilm.get_episode_url(show.slug, episode.season, episode.episode)
-                # tds = link.parent.parent.parent.find_all('td')
-                # entry['torrent_seeds'] = int(tds[-2].contents[0])
-                # entry['torrent_leeches'] = int(tds[-1].contents[0])
-                # entry['search_sort'] = torrent_availability(entry['torrent_seeds'], entry['torrent_leeches'])
-                # Parse content_size
-                # size = link.find_next(attrs={'class': 'detDesc'}).get_text()
-                # size = re.search('Size (\d+(\.\d+)?\xa0(?:[PTGMK])iB)', size)
-                #
-                # entry['content_size'] = parse_filesize(size.group(1))
+            if not episode:
+                log.warn("Unknown episode: {0} s{1:02d}e{2:02d}".format(search_title, search_season, search_episode))
+                continue
 
-                entries.add(entry)
+            episode_id = episode.get_episode_id()
+
+            entry = Entry()
+            entry['title'] = "{0} / {1}".format(search_title, episode_id)
+            entry['url'] = LostFilm.get_episode_url(show.slug, episode.season, episode.episode)
+            # entry['series_season'] = season
+            # entry['series_episode'] = episode
+            entry['series_id'] = episode_id
+            # tds = link.parent.parent.parent.find_all('td')
+            # entry['torrent_seeds'] = int(tds[-2].contents[0])
+            # entry['torrent_leeches'] = int(tds[-1].contents[0])
+            # entry['search_sort'] = torrent_availability(entry['torrent_seeds'], entry['torrent_leeches'])
+            # Parse content_size
+            # size = link.find_next(attrs={'class': 'detDesc'}).get_text()
+            # size = re.search('Size (\d+(\.\d+)?\xa0(?:[PTGMK])iB)', size)
+            #
+            # entry['content_size'] = parse_filesize(size.group(1))
+
+            entries.add(entry)
 
         return entries
 
@@ -857,7 +865,7 @@ class LostFilmPlugin(object):
 
 
 def reset_cache(manager):
-    db_session = flexget.manager.Session()
+    db_session = Session()
     db_session.query(DbLostFilmEpisode).delete()
     db_session.query(DbLostFilmShowAlternateName).delete()
     db_session.query(DbLostFilmShow).delete()
