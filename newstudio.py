@@ -580,13 +580,12 @@ class NewStudioPlugin(object):
         return NewStudioDatabase.get_forum_topics(forum_id, db_session)
 
     def search(self, task, entry, config=None):
-        entries = set()
-
         db_session = Session()
-
+        entries = set()
         for search_string in entry.get('search_strings', [entry['title']]):
             search_match = SEARCH_STRING_REGEXP.search(search_string)
             if not search_match:
+                log.warn("Invalid search string: {0}".format(search_string))
                 continue
 
             search_title = search_match.group(1)
@@ -597,6 +596,7 @@ class NewStudioPlugin(object):
 
             forum = self._search_forum(task, search_title, db_session)
             if not forum:
+                log.warn("Unknown forum: {0} s{1:02d}e{2:02d}".format(search_title, search_season, search_episode))
                 continue
 
             topics = self._search_forum_topics(task, forum.id, db_session)
@@ -606,19 +606,20 @@ class NewStudioPlugin(object):
                 except ParsingError as e:
                     log.warn(e)
                 else:
-                    if topic_info.season == search_season and topic_info.contains_episode(search_episode):
-                        episode_id = topic_info.get_episode_id()
+                    if topic_info.season != search_season or not topic_info.contains_episode(search_episode):
+                        continue
 
-                        entry = Entry()
-                        entry['title'] = "{0} / {1} / {2}".format(
-                            search_title, episode_id, topic_info.quality)
-                        entry['url'] = NewStudio.get_download_url(topic.download_id)
-                        # entry['series_season'] = topic_info.season
-                        # entry['series_episode'] = topic_info.begin_episode
-                        entry['series_id'] = episode_id
-                        # entry['quality'] = topic_info.quality
+                    episode_id = topic_info.get_episode_id()
 
-                        entries.add(entry)
+                    entry = Entry()
+                    entry['title'] = "{0} / {1} / {2}".format(search_title, episode_id, topic_info.quality)
+                    entry['url'] = NewStudio.get_download_url(topic.download_id)
+                    # entry['series_season'] = topic_info.season
+                    # entry['series_episode'] = topic_info.begin_episode
+                    entry['series_id'] = episode_id
+                    # entry['quality'] = topic_info.quality
+
+                    entries.add(entry)
 
         return entries
 

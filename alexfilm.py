@@ -386,9 +386,6 @@ class AlexFilmPlugin(object):
         return show
 
     def search(self, task, entry, config=None):
-
-        entries = set()
-
         db_session = Session()
 
         search_string_regexp = re.compile(r'^(.*?)\s*s(\d+)e(\d+)$', flags=re.IGNORECASE)
@@ -401,9 +398,11 @@ class AlexFilmPlugin(object):
         # regexp: '^([^/]*?)\s*/\s*([^/]*?)\s/\s*[Сс]езон\s*(\d+)\s*/\s*[Сс]ерии\s*(\d+)-(\d+).*,\s*(.*)\s*\].*$'
         # format: '\2 / \1 / s\3e\4-e\5 / \6'
 
+        entries = set()
         for search_string in entry.get('search_strings', [entry['title']]):
             search_match = search_string_regexp.search(search_string)
             if not search_match:
+                log.warn("Invalid search string: {0}".format(search_string))
                 continue
 
             search_title = search_match.group(1)
@@ -414,6 +413,7 @@ class AlexFilmPlugin(object):
 
             show = self.search_show(task, search_title, db_session)
             if not show:
+                log.warn("Unknown show: {0}".format(search_title))
                 continue
 
             try:
