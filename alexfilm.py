@@ -2,6 +2,7 @@
 
 from __future__ import unicode_literals, division, absolute_import
 from builtins import *  # noqa pylint: disable=unused-import, redefined-builtin
+from typing import Text, Dict, Optional, List, Set
 
 import six
 import json
@@ -17,10 +18,13 @@ from flexget.entry import Entry
 from flexget.event import event
 from flexget.manager import Session
 from flexget.plugin import PluginError
+from flexget.task import Task
 from flexget.utils import requests
 from requests.auth import AuthBase
 from sqlalchemy import Column, Unicode, Integer, DateTime, UniqueConstraint, ForeignKey, func
 from sqlalchemy.types import TypeDecorator, VARCHAR
+import sqlalchemy.orm
+import requests
 
 if six.PY2:
     from urlparse import urljoin
@@ -34,7 +38,7 @@ log = logging.getLogger(PLUGIN_NAME)
 Base = versioned_base(PLUGIN_NAME, SCHEMA_VER)
 
 
-def process_url(url, base_url):
+def process_url(url: Text, base_url: Text) -> Text:
     return urljoin(base_url, url)
 
 
@@ -75,7 +79,7 @@ class AlexFilmAuth(AuthBase):
     and cookies will be just set.
     """
 
-    def try_authenticate(self, payload):
+    def try_authenticate(self, payload: Dict) -> Dict:
         for _ in range(5):
             session = requests.Session()
             session.post('http://alexfilm.cc/login.php', data=payload)
@@ -85,7 +89,8 @@ class AlexFilmAuth(AuthBase):
             sleep(3)
         raise PluginError('Unable to obtain cookies from AlexFilm. Looks like invalid username or password.')
 
-    def __init__(self, username, password, cookies=None, db_session=None):
+    def __init__(self, username: Text, password: Text,
+                 cookies: Dict = None, db_session: sqlalchemy.orm.Session = None) -> None:
         if cookies is None:
             log.debug('AlexFilm cookie not found. Requesting new one.')
 
@@ -111,7 +116,7 @@ class AlexFilmAuth(AuthBase):
             log.debug('Using previously saved cookie.')
             self.cookies_ = cookies
 
-    def __call__(self, request):
+    def __call__(self, request: requests.PreparedRequest) -> requests.PreparedRequest:
         request.prepare_cookies(self.cookies_)
         return request
 
@@ -135,7 +140,7 @@ class AlexFilmAuthPlugin(object):
 
     auth_cache = {}
 
-    def try_find_cookie(self, db_session, username):
+    def try_find_cookie(self, db_session: sqlalchemy.orm.Session, username: Text) -> Optional[Dict]:
         account = db_session.query(AlexFilmAccount).filter(AlexFilmAccount.username == username).first()
         if account:
             if account.expiry_time < datetime.now():
@@ -146,7 +151,7 @@ class AlexFilmAuthPlugin(object):
         else:
             return None
 
-    def get_auth_handler(self, config):
+    def get_auth_handler(self, config: Dict) -> Dict:
         username = config.get('username')
         if not username or len(username) <= 0:
             raise PluginError('Username are not configured.')
@@ -165,9 +170,8 @@ class AlexFilmAuthPlugin(object):
         return auth_handler
 
     @plugin.priority(127)
-    def on_task_start(self, task, config):
-        auth_handler = self.get_auth_handler(config)
-        task.requests.auth = auth_handler
+    def on_task_start(self, task: Task, config: Dict) -> None:
+        task.requests.auth = self.get_auth_handler(config)
 
 
 # endregion
@@ -191,7 +195,7 @@ class DbAlexFilmShowAlternateName(Base):
 
 
 class AlexFilmShow(object):
-    def __init__(self, show_id, titles, url):
+    def __init__(self, show_id: int, titles: List[Text], url: Text) -> None:
         self.show_id = show_id
         self.titles = titles
         self.url = url
@@ -199,7 +203,7 @@ class AlexFilmShow(object):
 
 class AlexFilmParser(object):
     @staticmethod
-    def parse_shows_page(html):
+    def parse_shows_page(html: Text) -> Optional[Set[AlexFilmShow]]:
         serials_tree = BeautifulSoup(html, 'html.parser')
         serials_node = serials_tree.find('ul', id='serials')
         if not serials_node:
@@ -227,22 +231,21 @@ class AlexFilmParser(object):
 
 class AlexFilmDatabase(object):
     @staticmethod
-    def shows_timestamp(db_session):
-        shows_timestamp = db_session.query(func.min(DbAlexFilmShow.updated_at)).scalar() or None
-        return shows_timestamp
+    def shows_timestamp(db_session: sqlalchemy.orm.Session) -> datetime:
+        return db_session.query(func.min(DbAlexFilmShow.updated_at)).scalar() or None
 
     @staticmethod
-    def shows_count(db_session):
+    def shows_count(db_session: sqlalchemy.orm.Session) -> int:
         return db_session.query(DbAlexFilmShow).count()
 
     @staticmethod
-    def clear_shows(db_session):
+    def clear_shows(db_session: sqlalchemy.orm.Session) -> None:
         db_session.query(DbAlexFilmShowAlternateName).delete()
         db_session.query(DbAlexFilmShow).delete()
         db_session.commit()
 
     @staticmethod
-    def update_shows(shows, db_session):
+    def update_shows(shows: Set[AlexFilmShow], db_session: sqlalchemy.orm.Session) -> None:
         # Clear database
         AlexFilmDatabase.clear_shows(db_session)
 
@@ -260,7 +263,7 @@ class AlexFilmDatabase(object):
             db_session.commit()
 
     @staticmethod
-    def get_shows(db_session):
+    def get_shows(db_session: sqlalchemy.orm.Session) -> Set[AlexFilmShow]:
         shows = set()
 
         db_shows = db_session.query(DbAlexFilmShow).all()
@@ -280,7 +283,7 @@ class AlexFilmDatabase(object):
         return shows
 
     @staticmethod
-    def get_show_by_id(show_id, db_session):
+    def get_show_by_id(show_id: int, db_session: sqlalchemy.orm.Session) -> Optional[AlexFilmShow]:
         db_show = db_session.query(DbAlexFilmShow).filter(DbAlexFilmShow.id == show_id).first()
         if db_show:
             titles = list()
@@ -298,7 +301,7 @@ class AlexFilmDatabase(object):
         return None
 
     @staticmethod
-    def find_show_by_title(title, db_session):
+    def find_show_by_title(title: Text, db_session: sqlalchemy.orm.Session) -> Optional[AlexFilmShow]:
         db_show = db_session.query(DbAlexFilmShow).filter(DbAlexFilmShow.title == title).first()
         if db_show:
             return AlexFilmDatabase.get_show_by_id(db_show.id, db_session)
@@ -322,11 +325,15 @@ SEARCH_STRING_REGEXPS = [
 class AlexFilmPlugin(object):
     """AlexFilm urlrewrite/search plugin."""
 
-    def url_rewritable(self, task, entry):
+    def url_rewritable(self, task: Task, entry: Entry) -> bool:
         url = entry['url']
-        return TOPIC_URL_REGEXP.match(url)
+        match = TOPIC_URL_REGEXP.match(url)
+        if match:
+            return True
 
-    def url_rewrite(self, task, entry):
+        return False
+
+    def url_rewrite(self, task: Task, entry: Entry) -> bool:
         topic_url = entry['url']
 
         try:
@@ -354,7 +361,7 @@ class AlexFilmPlugin(object):
         entry['url'] = download_url
         return True
 
-    def get_shows(self, task):
+    def get_shows(self, task: Task) -> Optional[Set[AlexFilmShow]]:
         serials_url = 'http://alexfilm.cc/'
 
         try:
@@ -373,7 +380,7 @@ class AlexFilmPlugin(object):
 
         return shows
 
-    def search_show(self, task, title, db_session):
+    def search_show(self, task: Task, title: Text, db_session: sqlalchemy.orm.Session) -> Optional[AlexFilmShow]:
         update_required = True
         db_timestamp = AlexFilmDatabase.shows_timestamp(db_session)
         if db_timestamp:
@@ -389,7 +396,7 @@ class AlexFilmPlugin(object):
         show = AlexFilmDatabase.find_show_by_title(title, db_session)
         return show
 
-    def search(self, task, entry, config=None):
+    def search(self, task: Task, entry: Entry, config: Dict = None) -> Set[Entry]:
         db_session = Session()
 
         topic_name_regexp = re.compile(
@@ -410,7 +417,7 @@ class AlexFilmPlugin(object):
                     break
 
             if not search_match:
-                log.warn("Invalid search string: {0}".format(search_string))
+                log.warning("Invalid search string: {0}".format(search_string))
                 continue
 
             search_title = search_match.group(1)
@@ -421,7 +428,7 @@ class AlexFilmPlugin(object):
 
             show = self.search_show(task, search_title, db_session)
             if not show:
-                log.warn("Unknown show: {0}".format(search_title))
+                log.warning("Unknown show: {0}".format(search_title))
                 continue
 
             try:
@@ -481,6 +488,6 @@ class AlexFilmPlugin(object):
 
 
 @event('plugin.register')
-def register_plugin():
+def register_plugin() -> None:
     plugin.register(AlexFilmAuthPlugin, PLUGIN_NAME + '_auth', api_ver=2)
     plugin.register(AlexFilmPlugin, PLUGIN_NAME, interfaces=['urlrewriter', 'search'], api_ver=2)

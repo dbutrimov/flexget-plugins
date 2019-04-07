@@ -2,6 +2,7 @@
 
 from __future__ import unicode_literals, division, absolute_import
 from builtins import *  # noqa pylint: disable=unused-import, redefined-builtin
+from typing import Dict, Text, Optional, Set
 
 import six
 import json
@@ -16,10 +17,13 @@ from flexget.entry import Entry
 from flexget.event import event
 from flexget.manager import Session
 from flexget.plugin import PluginError
+from flexget.task import Task
 from flexget.utils import requests
 from requests.auth import AuthBase
 from sqlalchemy import Column, Unicode, Integer, DateTime, ForeignKey, func
 from sqlalchemy.types import TypeDecorator, VARCHAR
+import sqlalchemy.orm
+import requests
 
 if six.PY2:
     from urlparse import urljoin
@@ -74,7 +78,7 @@ class NewStudioAuth(AuthBase):
     and cookies will be just set
     """
 
-    def try_authenticate(self, payload):
+    def try_authenticate(self, payload: Dict) -> Dict:
         for _ in range(5):
             session = requests.Session()
             session.post('http://newstudio.tv/login.php', data=payload)
@@ -84,7 +88,8 @@ class NewStudioAuth(AuthBase):
             sleep(3)
         raise PluginError('Unable to obtain cookies from NewStudio. Looks like invalid username or password.')
 
-    def __init__(self, username, password, cookies=None, db_session=None):
+    def __init__(self, username: Text, password: Text,
+                 cookies: Dict = None, db_session: sqlalchemy.orm.Session = None) -> None:
         if cookies is None:
             log.debug('NewStudio cookie not found. Requesting new one.')
 
@@ -110,7 +115,7 @@ class NewStudioAuth(AuthBase):
             log.debug('Using previously saved cookie.')
             self.cookies_ = cookies
 
-    def __call__(self, request):
+    def __call__(self, request: requests.PreparedRequest) -> requests.PreparedRequest:
         request.prepare_cookies(self.cookies_)
         return request
 
@@ -134,7 +139,7 @@ class NewStudioAuthPlugin(object):
 
     auth_cache = {}
 
-    def try_find_cookie(self, db_session, username):
+    def try_find_cookie(self, db_session: sqlalchemy.orm.Session, username: Text) -> Optional[Dict]:
         account = db_session.query(NewStudioAccount).filter(NewStudioAccount.username == username).first()
         if account:
             if account.expiry_time < datetime.now():
@@ -145,7 +150,7 @@ class NewStudioAuthPlugin(object):
         else:
             return None
 
-    def get_auth_handler(self, config):
+    def get_auth_handler(self, config: Dict) -> Dict:
         username = config.get('username')
         if not username or len(username) <= 0:
             raise PluginError('Username are not configured.')
@@ -164,9 +169,8 @@ class NewStudioAuthPlugin(object):
         return auth_handler
 
     @plugin.priority(127)
-    def on_task_start(self, task, config):
-        auth_handler = self.get_auth_handler(config)
-        task.requests.auth = auth_handler
+    def on_task_start(self, task: Task, config: Dict) -> None:
+        task.requests.auth = self.get_auth_handler(config)
 
 
 # endregion
@@ -183,51 +187,51 @@ TOPIC_TITLE_QUALITY_REGEXP = re.compile(r'^.*\)\s*(.*?)(?:\s*\|.*)?$', flags=re.
 
 
 class NewStudioForum(object):
-    def __init__(self, id_, title):
+    def __init__(self, id_: int, title: Text) -> None:
         self.id = id_
         self.title = title
 
 
 class NewStudioTopic(object):
-    def __init__(self, id_, title, download_id):
+    def __init__(self, id_: int, title: Text, download_id: int) -> None:
         self.id = id_
         self.title = title
         self.download_id = download_id
 
 
 class NewStudioTopicInfo(object):
-    def __init__(self, title, season, begin_episode, end_episode, quality):
+    def __init__(self, title: Text, season: int, begin_episode: int, end_episode: int, quality: Text) -> None:
         self.title = title
         self.season = season
         self.begin_episode = begin_episode
         self.end_episode = max([end_episode, begin_episode])
         self.quality = quality
 
-    def get_episode_id(self):
+    def get_episode_id(self) -> Text:
         if self.begin_episode <= 0:
-            return 'S{0:02d}'.format(self.season)
+            return 's{0:02d}'.format(self.season)
         if self.end_episode <= self.begin_episode:
-            return 'S{0:02d}E{1:02d}'.format(self.season, self.begin_episode)
-        return 'S{0:02d}E{1:02d}-{2:02d}'.format(self.season, self.begin_episode, self.end_episode)
+            return 's{0:02d}e{1:02d}'.format(self.season, self.begin_episode)
+        return 's{0:02d}e{1:02d}-{2:02d}'.format(self.season, self.begin_episode, self.end_episode)
 
-    def contains_episode(self, episode):
+    def contains_episode(self, episode: int) -> bool:
         return (episode >= self.begin_episode) and (episode <= self.end_episode)
 
 
 class ParsingError(Exception):
-    def __init__(self, message):
+    def __init__(self, message: Text) -> None:
         self.message = message
 
-    def __str__(self):
+    def __str__(self) -> Text:
         return "{0}".format(self.message)
 
-    def __unicode__(self):
+    def __unicode__(self) -> Text:
         return u"{0}".format(self.message)
 
 
 class NewStudioParser(object):
     @staticmethod
-    def parse_forums(html):
+    def parse_forums(html: Text) -> Set[NewStudioForum]:
         soup = BeautifulSoup(html, 'html.parser')
         accordion_node = soup.find('div', class_='accordion', id='serialist')
         if not accordion_node:
@@ -256,7 +260,7 @@ class NewStudioParser(object):
         return forums
 
     @staticmethod
-    def parse_forum_pages_count(html):
+    def parse_forum_pages_count(html: Text) -> int:
         pages_count = 0
 
         soup = BeautifulSoup(html, 'html.parser')
@@ -276,7 +280,7 @@ class NewStudioParser(object):
         return pages_count
 
     @staticmethod
-    def parse_topics(html):
+    def parse_topics(html: Text) -> Set[NewStudioTopic]:
         topics = set()
 
         forum_soup = BeautifulSoup(html, 'html.parser')
@@ -316,7 +320,7 @@ class NewStudioParser(object):
         return topics
 
     @staticmethod
-    def parse_topic_title(title):
+    def parse_topic_title(title: Text) -> NewStudioTopicInfo:
         match = TOPIC_TITLE_EPISODE_REGEXP.search(title)
         if not match:
             raise ParsingError("Title `{0}` has invalid format".format(title))
@@ -361,21 +365,20 @@ class DbNewStudioTopic(Base):
 
 class NewStudioDatabase(object):
     @staticmethod
-    def forums_timestamp(db_session):
-        shows_timestamp = db_session.query(func.min(DbNewStudioForum.updated_at)).scalar() or None
-        return shows_timestamp
+    def forums_timestamp(db_session: sqlalchemy.orm.Session) -> datetime:
+        return db_session.query(func.min(DbNewStudioForum.updated_at)).scalar() or None
 
     @staticmethod
-    def forums_count(db_session):
+    def forums_count(db_session: sqlalchemy.orm.Session) -> int:
         return db_session.query(DbNewStudioForum).count()
 
     @staticmethod
-    def clear_forums(db_session):
+    def clear_forums(db_session: sqlalchemy.orm.Session) -> None:
         db_session.query(DbNewStudioForum).delete()
         db_session.commit()
 
     @staticmethod
-    def update_forums(forums, db_session):
+    def update_forums(forums: Set[NewStudioForum], db_session: sqlalchemy.orm.Session) -> None:
         # Clear database
         NewStudioDatabase.clear_forums(db_session)
 
@@ -389,7 +392,7 @@ class NewStudioDatabase(object):
             db_session.commit()
 
     @staticmethod
-    def get_forums(db_session):
+    def get_forums(db_session: sqlalchemy.orm.Session) -> Set[NewStudioForum]:
         forums = set()
 
         db_forums = db_session.query(DbNewStudioForum).all()
@@ -400,7 +403,7 @@ class NewStudioDatabase(object):
         return forums
 
     @staticmethod
-    def get_forum_by_id(forum_id, db_session):
+    def get_forum_by_id(forum_id: int, db_session: sqlalchemy.orm.Session) -> Optional[NewStudioForum]:
         db_forum = db_session.query(DbNewStudioForum).filter(DbNewStudioForum.id == forum_id).first()
         if db_forum:
             return NewStudioForum(id_=db_forum.id, title=db_forum.title)
@@ -408,7 +411,7 @@ class NewStudioDatabase(object):
         return None
 
     @staticmethod
-    def find_forum_by_title(title, db_session):
+    def find_forum_by_title(title: Text, db_session: sqlalchemy.orm.Session) -> Optional[NewStudioForum]:
         db_forum = db_session.query(DbNewStudioForum).filter(DbNewStudioForum.title == title).first()
         if db_forum:
             return NewStudioForum(id_=db_forum.id, title=db_forum.title)
@@ -416,22 +419,21 @@ class NewStudioDatabase(object):
         return None
 
     @staticmethod
-    def forum_topics_timestamp(forum_id, db_session):
-        topics_timestamp = db_session.query(func.min(DbNewStudioTopic.updated_at)).filter(
+    def forum_topics_timestamp(forum_id: int, db_session: sqlalchemy.orm.Session) -> datetime:
+        return db_session.query(func.min(DbNewStudioTopic.updated_at)).filter(
             DbNewStudioTopic.forum_id == forum_id).scalar() or None
-        return topics_timestamp
 
     @staticmethod
-    def forum_topics_count(forum_id, db_session):
+    def forum_topics_count(forum_id: int, db_session: sqlalchemy.orm.Session) -> int:
         return db_session.query(DbNewStudioTopic).filter(DbNewStudioTopic.forum_id == forum_id).count()
 
     @staticmethod
-    def clear_forum_topics(forum_id, db_session):
+    def clear_forum_topics(forum_id: int, db_session: sqlalchemy.orm.Session) -> None:
         db_session.query(DbNewStudioTopic).filter(DbNewStudioTopic.forum_id == forum_id).delete()
         db_session.commit()
 
     @staticmethod
-    def update_forum_topics(forum_id, topics, db_session):
+    def update_forum_topics(forum_id: int, topics: Set[NewStudioTopic], db_session: sqlalchemy.orm.Session) -> None:
         # Clear database
         NewStudioDatabase.clear_forum_topics(forum_id, db_session)
 
@@ -446,7 +448,7 @@ class NewStudioDatabase(object):
             db_session.commit()
 
     @staticmethod
-    def get_forum_topics(forum_id, db_session):
+    def get_forum_topics(forum_id: int, db_session: sqlalchemy.orm.Session) -> Set[NewStudioTopic]:
         topics = set()
 
         db_topics = db_session.query(DbNewStudioTopic).filter(DbNewStudioTopic.forum_id == forum_id)
@@ -461,25 +463,25 @@ class NewStudio(object):
     BASE_URL = 'http://newstudio.tv'
 
     @staticmethod
-    def get_forum_url(forum_id):
+    def get_forum_url(forum_id: int) -> Text:
         return '{0}/viewforum.php?f={1}'.format(NewStudio.BASE_URL, forum_id)
 
     @staticmethod
-    def get_topic_url(topic_id):
+    def get_topic_url(topic_id: int) -> Text:
         return '{0}/viewtopic.php?t={1}'.format(NewStudio.BASE_URL, topic_id)
 
     @staticmethod
-    def get_download_url(download_id):
+    def get_download_url(download_id: int) -> Text:
         return '{0}/download.php?id={1}'.format(NewStudio.BASE_URL, download_id)
 
     @staticmethod
-    def get_forums(requests_):
+    def get_forums(requests_: requests) -> Set[NewStudioForum]:
         response = requests_.get(NewStudio.BASE_URL)
         html = response.content
         return NewStudioParser.parse_forums(html)
 
     @staticmethod
-    def get_forum_topics(forum_id, requests_):
+    def get_forum_topics(forum_id: int, requests_: requests) -> Set[NewStudioTopic]:
         items_count = 50
         result = set()
         pages_count = 0
@@ -513,7 +515,7 @@ SEARCH_STRING_REGEXPS = [
 
 
 class NewStudioPlugin(object):
-    def url_rewritable(self, task, entry):
+    def url_rewritable(self, task: Task, entry: Entry) -> bool:
         topic_url = entry['url']
         match = TOPIC_ID_REGEXP.search(topic_url)
         if match:
@@ -521,7 +523,7 @@ class NewStudioPlugin(object):
 
         return False
 
-    def url_rewrite(self, task, entry):
+    def url_rewrite(self, task: Task, entry: Entry) -> bool:
         topic_url = entry['url']
         topic_url = topic_url + '&__fix403=1'
 
@@ -551,7 +553,7 @@ class NewStudioPlugin(object):
         entry.reject(reject_reason)
         return False
 
-    def _search_forum(self, task, title, db_session):
+    def _search_forum(self, task: Task, title: Text, db_session: sqlalchemy.orm.Session) -> NewStudioForum:
         update_required = True
         db_timestamp = NewStudioDatabase.forums_timestamp(db_session)
         if db_timestamp:
@@ -566,7 +568,8 @@ class NewStudioPlugin(object):
 
         return NewStudioDatabase.find_forum_by_title(title, db_session)
 
-    def _search_forum_topics(self, task, forum_id, db_session):
+    def _search_forum_topics(self, task: Task, forum_id: int,
+                             db_session: sqlalchemy.orm.Session) -> Set[NewStudioTopic]:
         update_required = True
         db_timestamp = NewStudioDatabase.forum_topics_timestamp(forum_id, db_session)
         if db_timestamp:
@@ -582,7 +585,7 @@ class NewStudioPlugin(object):
 
         return NewStudioDatabase.get_forum_topics(forum_id, db_session)
 
-    def search(self, task, entry, config=None):
+    def search(self, task: Task, entry: Entry, config: Dict = None) -> Set[Entry]:
         db_session = Session()
         entries = set()
         for search_string in entry.get('search_strings', [entry['title']]):
@@ -593,7 +596,7 @@ class NewStudioPlugin(object):
                     break
 
             if not search_match:
-                log.warn("Invalid search string: {0}".format(search_string))
+                log.warning("Invalid search string: {0}".format(search_string))
                 continue
 
             search_title = search_match.group(1)
@@ -604,7 +607,7 @@ class NewStudioPlugin(object):
 
             forum = self._search_forum(task, search_title, db_session)
             if not forum:
-                log.warn("Unknown forum: {0} s{1:02d}e{2:02d}".format(search_title, search_season, search_episode))
+                log.warning("Unknown forum: {0} s{1:02d}e{2:02d}".format(search_title, search_season, search_episode))
                 continue
 
             topics = self._search_forum_topics(task, forum.id, db_session)
@@ -612,7 +615,7 @@ class NewStudioPlugin(object):
                 try:
                     topic_info = NewStudioParser.parse_topic_title(topic.title)
                 except ParsingError as e:
-                    log.warn(e)
+                    log.warning(e)
                 else:
                     if topic_info.season != search_season or not topic_info.contains_episode(search_episode):
                         continue
@@ -637,6 +640,6 @@ class NewStudioPlugin(object):
 
 
 @event('plugin.register')
-def register_plugin():
+def register_plugin() -> None:
     plugin.register(NewStudioAuthPlugin, PLUGIN_NAME + '_auth', api_ver=2)
     plugin.register(NewStudioPlugin, PLUGIN_NAME, interfaces=['urlrewriter', 'search'], api_ver=2)
