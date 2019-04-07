@@ -587,7 +587,10 @@ PLAY_EPISODE_REGEXP = re.compile(
 
 REPLACE_LOCATION_REGEXP = re.compile(r'location\.replace\([\'"](.+?)[\'"]\);', flags=re.IGNORECASE)
 
-SEARCH_REGEXP = re.compile(r'^(.*?)\s*s(\d+?)e(\d+?)$', flags=re.IGNORECASE)
+SEARCH_STRING_REGEXPS = [
+    re.compile(r'^(.*?)\s*(\d+?)x(\d+?)$', flags=re.IGNORECASE),
+    re.compile(r'^(.*?)\s*s(\d+?)e(\d+?)$', flags=re.IGNORECASE)
+]
 
 
 class LostFilm(object):
@@ -817,7 +820,12 @@ class LostFilmPlugin(object):
         db_session = Session()
         entries = set()
         for search_string in entry.get('search_strings', [entry['title']]):
-            search_match = SEARCH_REGEXP.search(search_string)
+            search_match = None
+            for search_string_regexp in SEARCH_STRING_REGEXPS:
+                search_match = search_string_regexp.search(search_string)
+                if search_match:
+                    break
+
             if not search_match:
                 log.warn("Invalid search string: {0}".format(search_string))
                 continue
@@ -841,11 +849,12 @@ class LostFilmPlugin(object):
             episode_id = episode.get_episode_id()
 
             entry = Entry()
-            entry['title'] = "{0} / {1}".format(search_title, episode_id)
+            entry['title'] = "{0} / {1} / {2}".format(search_title, episode_id, episode.title)
             entry['url'] = LostFilm.get_episode_url(show.slug, episode.season, episode.episode)
-            # entry['series_season'] = season
-            # entry['series_episode'] = episode
+            # entry['series_season'] = episode.season
+            # entry['series_episode'] = episode.episode
             entry['series_id'] = episode_id
+            # entry['series_name'] = episode.title
             # tds = link.parent.parent.parent.find_all('td')
             # entry['torrent_seeds'] = int(tds[-2].contents[0])
             # entry['torrent_leeches'] = int(tds[-1].contents[0])

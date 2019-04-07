@@ -504,9 +504,12 @@ class NewStudio(object):
         return result
 
 
-SEARCH_STRING_REGEXP = re.compile(r'^(.*?)\s*s(\d+?)e(\d+?)$', flags=re.IGNORECASE)
 FORUMS_CACHE_DAYS_LIFETIME = 3
 FORUM_TOPICS_CACHE_DAYS_LIFETIME = 1
+SEARCH_STRING_REGEXPS = [
+    re.compile(r'^(.*?)\s*(\d+?)x(\d+?)$', flags=re.IGNORECASE),
+    re.compile(r'^(.*?)\s*s(\d+?)e(\d+?)$', flags=re.IGNORECASE)
+]
 
 
 class NewStudioPlugin(object):
@@ -583,7 +586,12 @@ class NewStudioPlugin(object):
         db_session = Session()
         entries = set()
         for search_string in entry.get('search_strings', [entry['title']]):
-            search_match = SEARCH_STRING_REGEXP.search(search_string)
+            search_match = None
+            for search_string_regexp in SEARCH_STRING_REGEXPS:
+                search_match = search_string_regexp.search(search_string)
+                if search_match:
+                    break
+
             if not search_match:
                 log.warn("Invalid search string: {0}".format(search_string))
                 continue
@@ -617,6 +625,7 @@ class NewStudioPlugin(object):
                     # entry['series_season'] = topic_info.season
                     # entry['series_episode'] = topic_info.begin_episode
                     entry['series_id'] = episode_id
+                    # entry['series_name'] = topic_info.title
                     # entry['quality'] = topic_info.quality
 
                     entries.add(entry)

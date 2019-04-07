@@ -313,6 +313,10 @@ class AlexFilmDatabase(object):
 
 TOPIC_URL_REGEXP = re.compile(r'^https?://(?:www\.)?alexfilm\.cc/viewtopic\.php\?t=(\d+).*$', flags=re.IGNORECASE)
 DOWNLOAD_URL_REGEXP = re.compile(r'dl\.php\?id=(\d+)', flags=re.IGNORECASE)
+SEARCH_STRING_REGEXPS = [
+    re.compile(r'^(.*?)\s*(\d+?)x(\d+?)$', flags=re.IGNORECASE),
+    re.compile(r'^(.*?)\s*s(\d+?)e(\d+?)$', flags=re.IGNORECASE)
+]
 
 
 class AlexFilmPlugin(object):
@@ -388,7 +392,6 @@ class AlexFilmPlugin(object):
     def search(self, task, entry, config=None):
         db_session = Session()
 
-        search_string_regexp = re.compile(r'^(.*?)\s*s(\d+)e(\d+)$', flags=re.IGNORECASE)
         topic_name_regexp = re.compile(
             r"^([^/]*?)\s*/\s*([^/]*?)\s/\s*[Сс]езон\s*(\d+)\s*/\s*[Сс]ерии\s*(\d+)-(\d+).*,\s*(.*)\s*\].*$",
             flags=re.IGNORECASE)
@@ -400,7 +403,12 @@ class AlexFilmPlugin(object):
 
         entries = set()
         for search_string in entry.get('search_strings', [entry['title']]):
-            search_match = search_string_regexp.search(search_string)
+            search_match = None
+            for search_string_regexp in SEARCH_STRING_REGEXPS:
+                search_match = search_string_regexp.search(search_string)
+                if search_match:
+                    break
+
             if not search_match:
                 log.warn("Invalid search string: {0}".format(search_string))
                 continue
@@ -452,8 +460,8 @@ class AlexFilmPlugin(object):
                 if search_season != season or (search_episode < first_episode or search_episode > last_episode):
                     continue
 
-                name = "{0} / {1} / s{2:02d}e{3:02d}-{4:02d} / {5}".format(
-                    title, alternative_title, season, first_episode, last_episode, quality)
+                episode_id = "s{0:02d}e{1:02d}-{2:02d}".format(season, first_episode, last_episode)
+                name = "{0} / {1} / {2} / {3}".format(title, alternative_title, episode_id, quality)
                 topic_url = url_node.get('href')
                 topic_url = process_url(topic_url, serial_response.url)
 
@@ -462,6 +470,7 @@ class AlexFilmPlugin(object):
                 entry = Entry()
                 entry['title'] = name
                 entry['url'] = topic_url
+                entry['series_id'] = episode_id
 
                 entries.add(entry)
 
