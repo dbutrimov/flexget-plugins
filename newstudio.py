@@ -168,9 +168,21 @@ class NewStudioAuthPlugin(object):
 
         return auth_handler
 
-    @plugin.priority(127)
+    @plugin.priority(plugin.PRIORITY_DEFAULT)
     def on_task_start(self, task: Task, config: Dict) -> None:
         task.requests.auth = self.get_auth_handler(config)
+
+    # Run before all downloads
+    @plugin.priority(plugin.PRIORITY_FIRST)
+    def on_task_download(self, task, config):
+        for entry in task.accepted:
+            if entry.get('download_auth'):
+                log.debug('entry %s already has auth set, skipping', entry)
+                continue
+
+            username = config.get('username')
+            log.debug('setting auth with username %s', username)
+            entry['download_auth'] = self.get_auth_handler(config)
 
 
 # endregion
