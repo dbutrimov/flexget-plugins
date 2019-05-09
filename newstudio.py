@@ -36,9 +36,15 @@ SCHEMA_VER = 0
 log = logging.getLogger(PLUGIN_NAME)
 Base = versioned_base(PLUGIN_NAME, SCHEMA_VER)
 
+HOST_REGEXP = re.compile(r'^https?://(?:www\.)?newstudio\.tv', flags=re.IGNORECASE)
+
 
 def process_url(url, base_url):
     return urljoin(base_url, url)
+
+
+def validate_host(url: Text) -> bool:
+    return HOST_REGEXP.match(url) is not None
 
 
 # region NewStudioAuthPlugin
@@ -178,6 +184,11 @@ class NewStudioAuthPlugin(object):
         for entry in task.accepted:
             if entry.get('download_auth'):
                 log.debug('entry %s already has auth set, skipping', entry)
+                continue
+
+            url = entry['url']
+            if not validate_host(url):
+                log.debug('entry %s has invalid host, skipping', entry)
                 continue
 
             username = config.get('username')

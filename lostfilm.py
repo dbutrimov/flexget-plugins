@@ -41,9 +41,15 @@ COOKIES_DOMAIN = '.lostfilm.tv'
 log = logging.getLogger(PLUGIN_NAME)
 Base = versioned_base(PLUGIN_NAME, SCHEMA_VER)
 
+HOST_REGEXP = re.compile(r'^https?://(?:www\.)?lostfilm\.tv', flags=re.IGNORECASE)
+
 
 def process_url(url: Text, base_url: Text) -> Text:
     return urljoin(base_url, url)
+
+
+def validate_host(url: Text) -> bool:
+    return HOST_REGEXP.match(url) is not None
 
 
 class LostFilmApi(object):
@@ -197,9 +203,26 @@ class LostFilmAuthPlugin(object):
 
         return auth_handler
 
-    @plugin.priority(127)
+    @plugin.priority(plugin.PRIORITY_DEFAULT)
     def on_task_start(self, task: Task, config: Dict) -> None:
         task.requests.auth = self.get_auth_handler(config)
+
+    # Run before all downloads
+    @plugin.priority(plugin.PRIORITY_FIRST)
+    def on_task_download(self, task, config):
+        for entry in task.accepted:
+            if entry.get('download_auth'):
+                log.debug('entry %s already has auth set, skipping', entry)
+                continue
+
+            url = entry['url']
+            if not validate_host(url):
+                log.debug('entry %s has invalid host, skipping', entry)
+                continue
+
+            username = config.get('username')
+            log.debug('setting auth with username %s', username)
+            entry['download_auth'] = self.get_auth_handler(config)
 
 
 # endregion
