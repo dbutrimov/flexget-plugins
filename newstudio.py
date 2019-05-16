@@ -125,8 +125,6 @@ class NewStudioAuth(AuthBase):
         # request.prepare_cookies(self.__cookies)
         if validate_host(request.url):
             request.headers['Cookie'] = '; '.join('{0}={1}'.format(key, val) for key, val in self.__cookies.items())
-            return request
-
         return request
 
 
