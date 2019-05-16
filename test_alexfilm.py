@@ -13,7 +13,7 @@ class TestAlexFilm(unittest.TestCase):
 
     def test_auth(self):
         auth_handler = alexfilm.AlexFilmAuth(self._username, self._password)
-        print(auth_handler.cookies_)
+        print(auth_handler)
 
         self.assertRaises(Exception)
 

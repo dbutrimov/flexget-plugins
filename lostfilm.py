@@ -41,7 +41,7 @@ COOKIES_DOMAIN = '.lostfilm.tv'
 log = logging.getLogger(PLUGIN_NAME)
 Base = versioned_base(PLUGIN_NAME, SCHEMA_VER)
 
-HOST_REGEXP = re.compile(r'^https?://(?:www\.)?lostfilm\.tv', flags=re.IGNORECASE)
+HOST_REGEXP = re.compile(r'^https?://(?:www\.)?(?:.+\.)?lostfilm\.tv', flags=re.IGNORECASE)
 
 
 def process_url(url: Text, base_url: Text) -> Text:
@@ -134,12 +134,12 @@ class LostFilmAuth(AuthBase):
                 'rem': 1
             }
 
-            self._cookies = self.try_authenticate(payload_)
+            self.__cookies = self.try_authenticate(payload_)
             if db_session:
                 db_session.add(
                     LostFilmAccount(
                         username=username,
-                        cookies=self._cookies,
+                        cookies=self.__cookies,
                         expiry_time=datetime.now() + timedelta(days=1)))
                 db_session.commit()
                 # else:
@@ -147,11 +147,14 @@ class LostFilmAuth(AuthBase):
                 #         'db_session can not be None if cookies is None')
         else:
             log.debug('Using previously saved cookie.')
-            self._cookies = cookies
+            self.__cookies = cookies
 
     def __call__(self, request: requests.PreparedRequest) -> requests.PreparedRequest:
-        # request.prepare_cookies(self._cookies)
-        request.headers['Cookie'] = '; '.join('{0}={1}'.format(key, val) for key, val in self._cookies.items())
+        # request.prepare_cookies(self.__cookies)
+        if validate_host(request.url):
+            request.headers['Cookie'] = '; '.join('{0}={1}'.format(key, val) for key, val in self.__cookies.items())
+            return request
+
         return request
 
 

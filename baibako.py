@@ -42,7 +42,7 @@ BASE_URL = 'http://baibako.tv'
 log = logging.getLogger(PLUGIN_NAME)
 Base = versioned_base(PLUGIN_NAME, SCHEMA_VER)
 
-HOST_REGEXP = re.compile(r'^https?://(?:www\.)?baibako\.tv', flags=re.IGNORECASE)
+HOST_REGEXP = re.compile(r'^https?://(?:www\.)?(?:.+\.)?baibako\.tv', flags=re.IGNORECASE)
 
 
 def process_url(url, base_url):
@@ -105,12 +105,12 @@ class BaibakoAuth(AuthBase):
         if cookies is None:
             log.debug('Baibako cookie not found. Requesting new one.')
             payload_ = {'username': username, 'password': password}
-            self.cookies_ = self.try_authenticate(payload_)
+            self.__cookies = self.try_authenticate(payload_)
             if db_session:
                 db_session.add(
                     BaibakoAccount(
                         username=username,
-                        cookies=self.cookies_,
+                        cookies=self.__cookies,
                         expiry_time=datetime.now() + timedelta(days=1)))
                 db_session.commit()
             # else:
@@ -118,10 +118,14 @@ class BaibakoAuth(AuthBase):
             #         'db_session can not be None if cookies is None')
         else:
             log.debug('Using previously saved cookie.')
-            self.cookies_ = cookies
+            self.__cookies = cookies
 
     def __call__(self, request: requests.PreparedRequest) -> requests.PreparedRequest:
-        request.prepare_cookies(self.cookies_)
+        # request.prepare_cookies(self.__cookies)
+        if validate_host(request.url):
+            request.headers['Cookie'] = '; '.join('{0}={1}'.format(key, val) for key, val in self.__cookies.items())
+            return request
+
         return request
 
 

@@ -51,7 +51,7 @@ class TestLostFilm(unittest.TestCase):
         self.assertRaises(Exception)
 
     def test_episode_torrents(self):
-        torrents = lostfilm.LostFilm.get_episode_torrents(TestLostFilm._requests, 214, 5, 11)
+        torrents = lostfilm.LostFilm.get_episode_torrents(TestLostFilm._requests, 412, 1, 5)
         for torrent in torrents:
             print(u"[{0}] {1} - {2}".format(torrent.label, torrent.title, torrent.url))
 
