@@ -9,7 +9,7 @@ import json
 import logging
 import re
 from datetime import datetime, timedelta
-from time import sleep
+from time import sleep, time
 from bs4 import BeautifulSoup
 from flexget import plugin
 from flexget.db_schema import versioned_base
@@ -26,9 +26,9 @@ import sqlalchemy.orm
 import requests
 
 if six.PY2:
-    from urlparse import urljoin
+    from urlparse import urljoin, urlparse, urlunparse, urlencode, parse_qsl
 elif six.PY3:
-    from urllib.parse import urljoin
+    from urllib.parse import urljoin, urlparse, urlunparse, urlencode, parse_qsl
 
 PLUGIN_NAME = 'newstudio'
 SCHEMA_VER = 0
@@ -488,6 +488,19 @@ class NewStudio(object):
     BASE_URL = 'http://newstudio.tv'
 
     @staticmethod
+    def add_url_params(url: Text, params: dict) -> Text:
+        url_parts = list(urlparse(url))
+        query = dict(parse_qsl(url_parts[4]))
+        query.update(params)
+        url_parts[4] = urlencode(query)
+
+        return urlunparse(url_parts)
+
+    @staticmethod
+    def add_timestamp(url: Text) -> Text:
+        return NewStudio.add_url_params(url, {'__ts': int(time())})
+
+    @staticmethod
     def get_forum_url(forum_id: int) -> Text:
         return '{0}/viewforum.php?f={1}'.format(NewStudio.BASE_URL, forum_id)
 
@@ -513,6 +526,7 @@ class NewStudio(object):
         page_index = 0
         while True:
             url = '{0}&start={1}'.format(NewStudio.get_forum_url(forum_id), page_index * items_count)
+            url = NewStudio.add_timestamp(url)
             response = requests_.get(url)
             html = response.content
             sleep(3)
@@ -550,7 +564,7 @@ class NewStudioPlugin(object):
 
     def url_rewrite(self, task: Task, entry: Entry) -> bool:
         topic_url = entry['url']
-        topic_url = topic_url + '&__fix403=1'
+        topic_url = NewStudio.add_timestamp(topic_url)
 
         try:
             topic_response = task.requests.get(topic_url)
