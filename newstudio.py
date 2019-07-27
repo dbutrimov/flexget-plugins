@@ -529,7 +529,10 @@ class NewStudio(object):
         pages_count = 0
         page_index = 0
         while True:
-            url = '{0}&start={1}'.format(NewStudio.get_forum_url(forum_id), max(page_index * items_count, 1))
+            url = NewStudio.get_forum_url(forum_id)
+            start = page_index * items_count
+            if start > 0:
+                url = NewStudio.add_url_params(url, {'start': start})
             url = NewStudio.add_timestamp(url)
             response = requests_.get(url)
             html = response.content
