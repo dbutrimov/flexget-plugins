@@ -309,11 +309,13 @@ class NewStudioParser(object):
         topics = set()
 
         forum_soup = BeautifulSoup(html, 'html.parser')
-        accordion_node = forum_soup.find('div', class_='accordion-inner')
+        leftside_node = forum_soup.find('div', id='sideLeft')
+        if not leftside_node:
+            raise ParsingError("Error while parsing serials page: node <div id=`sideLeft`> are not found")
+
+        accordion_node = leftside_node.find('div', class_='accordion-inner')
         if not accordion_node:
-            raise ParsingError(
-                "Error while parsing serials page: node <div class=`accordion-inner`> are not found"
-            )
+            raise ParsingError("Error while parsing serials page: node <div class=`accordion-inner`> are not found")
 
         row_nodes = accordion_node.find_all('div', class_='row-fluid')
         for row_node in row_nodes:
@@ -322,6 +324,8 @@ class NewStudioParser(object):
                 continue
 
             title = title_node.text
+            if not title:
+                raise ParsingError("Error while parsing serials page: empty title")
 
             topic_url = title_node.get('href')
             match = TOPIC_ID_REGEXP.search(topic_url)
@@ -525,7 +529,7 @@ class NewStudio(object):
         pages_count = 0
         page_index = 0
         while True:
-            url = '{0}&start={1}'.format(NewStudio.get_forum_url(forum_id), page_index * items_count)
+            url = '{0}&start={1}'.format(NewStudio.get_forum_url(forum_id), max(page_index * items_count, 1))
             url = NewStudio.add_timestamp(url)
             response = requests_.get(url)
             html = response.content

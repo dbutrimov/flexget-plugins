@@ -29,6 +29,8 @@ class TestNewStudio(unittest.TestCase):
         print(len(topics))
 
         for topic in topics:
+            print(u"[{0}, {1}] {2}".format(topic.id, topic.download_id, topic.title))
+
             try:
                 topic_info = newstudio.NewStudioParser.parse_topic_title(topic.title)
             except newstudio.ParsingError as e:
