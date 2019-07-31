@@ -656,7 +656,12 @@ class NewStudioPlugin(object):
                 log.warning("Unknown forum: {0} s{1:02d}e{2:02d}".format(search_title, search_season, search_episode))
                 continue
 
-            topics = self._search_forum_topics(task, forum.id, db_session)
+            try:
+                topics = self._search_forum_topics(task, forum.id, db_session)
+            except Exception as error:
+                log.error("Error while getting topics of forum `Id={0}`:\n{1}".format(forum.id, error))
+                continue
+
             for topic in topics:
                 try:
                     topic_info = NewStudioParser.parse_topic_title(topic.title)
