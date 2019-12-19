@@ -526,10 +526,14 @@ class BaibakoPlugin(object):
             update_required = difference.days > FORUMS_CACHE_DAYS_LIFETIME
         if update_required:
             log.debug('Update forums...')
-            shows = Baibako.get_forums(task.requests)
-            if shows:
-                log.debug('{0} forum(s) received'.format(len(shows)))
-                BaibakoDatabase.update_forums(shows, db_session)
+            try:
+                shows = Baibako.get_forums(task.requests)
+            except Exception as e:
+                log.warning(e)
+            else:
+                if shows:
+                    log.debug('{0} forum(s) received'.format(len(shows)))
+                    BaibakoDatabase.update_forums(shows, db_session)
 
         return BaibakoDatabase.find_forum_by_title(title, db_session)
 
@@ -542,11 +546,15 @@ class BaibakoPlugin(object):
             update_required = difference.days > FORUM_TOPICS_CACHE_DAYS_LIFETIME
         if update_required:
             log.debug('Update topics for forum `{0}`...'.format(forum_id))
-            topics = Baibako.get_forum_topics(forum_id, tab, task.requests)
-            if topics:
-                log.debug('{0} topic(s) received for forum `{1}`'.format(len(topics), forum_id))
-                BaibakoDatabase.update_forum_topics(forum_id, topics, db_session)
-                return topics
+            try:
+                topics = Baibako.get_forum_topics(forum_id, tab, task.requests)
+            except Exception as e:
+                log.warning(e)
+            else:
+                if topics:
+                    log.debug('{0} topic(s) received for forum `{1}`'.format(len(topics), forum_id))
+                    BaibakoDatabase.update_forum_topics(forum_id, topics, db_session)
+                    return topics
 
         return BaibakoDatabase.get_forum_topics(forum_id, db_session)
 
