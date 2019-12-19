@@ -10,7 +10,7 @@ class TestLostFilm(unittest.TestCase):
 
     def setUp(self):
         with open("test_config.yml", 'r') as stream:
-            config = yaml.load(stream)
+            config = yaml.safe_load(stream)
 
             requests_ = TestLostFilm._requests
             if not requests_:

@@ -7,7 +7,7 @@ import alexfilm
 class TestAlexFilm(unittest.TestCase):
     def setUp(self):
         with open("test_config.yml", 'r') as stream:
-            config = yaml.load(stream)
+            config = yaml.safe_load(stream)
             self._username = config['secrets']['alexfilm']['username']
             self._password = config['secrets']['alexfilm']['password']
 

@@ -8,7 +8,7 @@ import baibako
 class TestBaibako(unittest.TestCase):
     def setUp(self):
         with open("test_config.yml", 'r') as stream:
-            config = yaml.load(stream)
+            config = yaml.safe_load(stream)
             self._username = config['secrets']['baibako']['username']
             self._password = config['secrets']['baibako']['password']
 
