@@ -88,8 +88,8 @@ class AlexFilmAuth(AuthBase):
     def try_authenticate(self, payload: Dict) -> Dict:
         for _ in range(5):
             session = requests.Session()
-            session.post('http://alexfilm.cc/login.php', data=payload)
-            cookies = session.cookies.get_dict(domain='.alexfilm.cc')
+            session.post('http://alexfilm.org/login.php', data=payload)
+            cookies = session.cookies.get_dict(domain='.alexfilm.org')
             if cookies and len(cookies) > 0:
                 return cookies
             sleep(3)
@@ -387,7 +387,7 @@ class AlexFilmPlugin(object):
         return True
 
     def get_shows(self, task: Task) -> Optional[Set[AlexFilmShow]]:
-        serials_url = 'http://alexfilm.cc/'
+        serials_url = 'http://alexfilm.org/'
 
         try:
             serials_response = task.requests.get(serials_url)
