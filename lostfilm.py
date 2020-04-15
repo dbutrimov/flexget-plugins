@@ -34,7 +34,7 @@ elif six.PY3:
 PLUGIN_NAME = 'lostfilm'
 SCHEMA_VER = 0
 
-BASE_URL = 'http://lostfilm.tv'
+BASE_URL = 'https://www.lostfilm.tv'
 API_URL = BASE_URL + '/ajaxik.php'
 COOKIES_DOMAIN = '.lostfilm.tv'
 
@@ -131,6 +131,8 @@ class LostFilmAuth(AuthBase):
                 'type': 'login',
                 'mail': username,
                 'pass': password,
+                'need_captcha': '',
+                'captcha': '',
                 'rem': 1
             }
 
