@@ -37,7 +37,8 @@ SCHEMA_VER = 0
 log = logging.getLogger(PLUGIN_NAME)
 Base = versioned_base(PLUGIN_NAME, SCHEMA_VER)
 
-HOST_REGEXP = re.compile(r'^https?://(?:www\.)?(?:.+\.)?alexfilm\.cc', flags=re.IGNORECASE)
+BASE_URL = 'http://alexfilm.org'
+HOST_REGEXP = re.compile(r'^https?://(?:www\.)?(?:.+\.)?alexfilm\.org', flags=re.IGNORECASE)
 
 
 def process_url(url: Text, base_url: Text) -> Text:
@@ -226,7 +227,45 @@ class AlexFilmShow(object):
         self.url = url
 
 
+class ParsingError(Exception):
+    def __init__(self, message: Text) -> None:
+        self.message = message
+
+    def __str__(self):
+        return "{0}".format(self.message)
+
+    def __unicode__(self):
+        return u"{0}".format(self.message)
+
+
 class AlexFilmParser(object):
+    @staticmethod
+    def parse_download_url(html: Text) -> Text:
+        bs = BeautifulSoup(html, 'html.parser')
+        download_node = bs.find('a', href=DOWNLOAD_URL_REGEXP)
+        if not download_node:
+            raise ParsingError('download node is not found')
+
+        return download_node.get('href')
+
+    @staticmethod
+    def parse_download_id(html: Text) -> int:
+        url = AlexFilmParser.parse_download_url(html)
+        match = DOWNLOAD_URL_REGEXP.search(url)
+        if not match:
+            raise ParsingError('invalid download url format')
+
+        return int(match.group(1))
+
+    @staticmethod
+    def parse_magnet(html: Text) -> Text:
+        bs = BeautifulSoup(html, 'html.parser')
+        magnet_node = bs.find('a', id='magnet')
+        if not magnet_node:
+            raise ParsingError('magnet node is not found')
+
+        return magnet_node.get('href')
+
     @staticmethod
     def parse_shows_page(html: Text) -> Optional[Set[AlexFilmShow]]:
         serials_tree = BeautifulSoup(html, 'html.parser')
@@ -339,12 +378,30 @@ class AlexFilmDatabase(object):
         return None
 
 
-TOPIC_URL_REGEXP = re.compile(r'^https?://(?:www\.)?alexfilm\.cc/viewtopic\.php\?t=(\d+).*$', flags=re.IGNORECASE)
+TOPIC_URL_REGEXP = re.compile(r'^https?://(?:www\.)?alexfilm\.org/viewtopic\.php\?t=(\d+).*$', flags=re.IGNORECASE)
 DOWNLOAD_URL_REGEXP = re.compile(r'dl\.php\?id=(\d+)', flags=re.IGNORECASE)
 SEARCH_STRING_REGEXPS = [
     re.compile(r'^(.*?)\s*(\d+?)x(\d+?)$', flags=re.IGNORECASE),
     re.compile(r'^(.*?)\s*s(\d+?)e(\d+?)$', flags=re.IGNORECASE)
 ]
+
+
+class AlexFilm(object):
+    @staticmethod
+    def get_topic_url(topic_id: int) -> Text:
+        return '{0}/viewtopic.php?t={1}'.format(BASE_URL, topic_id)
+
+    @staticmethod
+    def get_download_id(requests_: requests.Session, topic_id: int) -> int:
+        topic_url = AlexFilm.get_topic_url(topic_id)
+        topic_response = requests_.get(topic_url)
+        return AlexFilmParser.parse_download_id(topic_response.content)
+
+    @staticmethod
+    def get_marget(requests_: requests.Session, topic_id: int) -> Text:
+        topic_url = AlexFilm.get_topic_url(topic_id)
+        topic_response = requests_.get(topic_url)
+        return AlexFilmParser.parse_magnet(topic_response.content)
 
 
 class AlexFilmPlugin(object):
@@ -372,15 +429,14 @@ class AlexFilmPlugin(object):
         topic_html = topic_response.content
         sleep(3)
 
-        topic_tree = BeautifulSoup(topic_html, 'html.parser')
-        download_node = topic_tree.find('a', href=DOWNLOAD_URL_REGEXP)
-        if not download_node:
-            reject_reason = "Error while parsing topic page: download node are not found"
+        try:
+            download_url = AlexFilmParser.parse_download_url(topic_html)
+        except ParsingError as e:
+            reject_reason = "Error while parsing topic page: {0}".format(e)
             log.error(reject_reason)
             entry.reject(reject_reason)
             return False
 
-        download_url = download_node.get('href')
         download_url = process_url(download_url, topic_response.url)
 
         entry['url'] = download_url
