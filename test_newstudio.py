@@ -1,15 +1,17 @@
 # -*- coding: utf-8 -*-
+import cgi
 import unittest
 import yaml
 import requests
 
 import newstudio
+import urllib3
 
 
 class TestNewStudio(unittest.TestCase):
     def setUp(self):
         with open("test_config.yml", 'r') as stream:
-            config = yaml.load(stream)
+            config = yaml.safe_load(stream)
             self._username = config['secrets']['newstudio']['username']
             self._password = config['secrets']['newstudio']['password']
 
@@ -25,7 +27,7 @@ class TestNewStudio(unittest.TestCase):
         self.assertRaises(Exception)
 
     def test_forum_topics(self):
-        topics = newstudio.NewStudio.get_forum_topics(206, self._requests)
+        topics = newstudio.NewStudio.get_forum_topics(505, self._requests)
         print(len(topics))
 
         for topic in topics:
@@ -59,11 +61,27 @@ class TestNewStudio(unittest.TestCase):
 
         self.assertRaises(Exception)
 
-    def test_torrent(self):
-        download_url = newstudio.NewStudio.get_download_url(31460)
+    def test_download_torrent(self):
+        download_url = newstudio.NewStudio.get_download_url(36517)
         print(download_url)
 
+        response = self._requests.get(download_url)
+        content_type = response.headers['Content-Type']
+        print(content_type)
+
         self.assertRaises(Exception)
+
+    def test_filename(self):
+        http = urllib3.PoolManager()
+        url = "http://releases.ubuntu.com/18.04/ubuntu-18.04.3-desktop-amd64.iso.torrent?_ga=2.196584104.506460685.1574018110-1051848907.1572256016"
+        response = http.request('GET', url)
+        content_disposition = response.headers.get('Content-Disposition', '')
+        _, params = cgi.parse_header(content_disposition)
+        filename = params.get('filename')
+        print(filename)
+
+
+        # print(response.info().get_filename())
 
 
 if __name__ == '__main__':

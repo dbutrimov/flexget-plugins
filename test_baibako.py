@@ -16,6 +16,9 @@ class TestBaibako(unittest.TestCase):
             self._requests = requests.session()
             self._requests.auth = self._auth
 
+    def tearDown(self):
+        self._requests.close()
+
     def test_forums(self):
         forums = baibako.Baibako.get_forums(self._requests)
         for forum in forums:
@@ -39,7 +42,9 @@ class TestBaibako(unittest.TestCase):
             except Exception as e:
                 print(u"\033[91m[ERROR]\033[0m {0}".format(e.message))
 
-        self.assertRaises(Exception)
+    def test_download_torrent(self):
+        hash = baibako.Baibako.get_info_hash(self._requests, 36068)
+        print("hash: {0}".format(hash))
 
 
 if __name__ == '__main__':

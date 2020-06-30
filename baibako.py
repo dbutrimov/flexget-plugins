@@ -1,9 +1,12 @@
 # -*- coding: utf-8 -*-
 
 from __future__ import unicode_literals, division, absolute_import
+
+import hashlib
 from builtins import *  # noqa pylint: disable=unused-import, redefined-builtin
 from typing import Dict, Text, Optional, Set, List, Any
 
+import bencodepy
 import six
 import json
 import logging
@@ -93,10 +96,13 @@ class BaibakoAuth(AuthBase):
     def try_authenticate(self, payload: Dict) -> Dict:
         for _ in range(5):
             session = requests.Session()
-            session.post('{0}/takelogin.php'.format(BASE_URL), data=payload)
-            cookies = session.cookies.get_dict(domain=DOMAIN)
-            if cookies and len(cookies) > 0 and 'uid' in cookies:
-                return cookies
+            try:
+                session.post('{0}/takelogin.php'.format(BASE_URL), data=payload)
+                cookies = session.cookies.get_dict(domain=DOMAIN)
+                if cookies and len(cookies) > 0 and 'uid' in cookies:
+                    return cookies
+            finally:
+                session.close()
             sleep(3)
         raise PluginError('Unable to obtain cookies from Baibako. Looks like invalid username or password.')
 
@@ -256,6 +262,13 @@ class ParsingError(Exception):
 
 
 class BaibakoParser(object):
+    @staticmethod
+    def parse_topic_id(url: Text) -> Optional[int]:
+        match = TOPIC_ID_REGEXP.search(url)
+        if not match:
+            return None
+        return int(match.group(1))
+
     @staticmethod
     def parse_forums(html: Text) -> Set[BaibakoForum]:
         soup = BeautifulSoup(html, 'html.parser')
@@ -465,6 +478,17 @@ class Baibako(object):
         html = response.content
         return BaibakoParser.parse_topics(html)
 
+    @staticmethod
+    def get_info_hash(requests_: requests, topic_id: int) -> Text:
+        download_url = Baibako.get_download_url(topic_id)
+        response = requests_.get(download_url)
+        content_type = response.headers['Content-Type']
+        if content_type != 'application/x-bittorrent':
+            raise TypeError("It is not a torrent file")
+
+        info = bencodepy.decode(response.content)
+        return hashlib.sha1(bencodepy.encode(info[b'info'])).hexdigest().lower()
+
 
 FORUMS_CACHE_DAYS_LIFETIME = 3
 FORUM_TOPICS_CACHE_DAYS_LIFETIME = 1
@@ -498,12 +522,7 @@ class BaibakoPlugin(object):
     }
 
     def url_rewritable(self, task: Task, entry: Entry) -> bool:
-        url = entry['url']
-        match = TOPIC_ID_REGEXP.search(url)
-        if match:
-            return True
-
-        return False
+        return BaibakoParser.parse_topic_id(entry['url']) is not None
 
     def url_rewrite(self, task: Task, entry: Entry) -> bool:
         url = entry['url']
@@ -517,6 +536,30 @@ class BaibakoPlugin(object):
         topic_id = int(url_match.group(1))
         entry['url'] = Baibako.get_download_url(topic_id)
         return True
+
+    @plugin.priority(plugin.PRIORITY_LAST)
+    def on_task_filter(self, task, config):
+        if not config:
+            log.debug('Filter disabled, skipping')
+            return
+        for entry in task.entries:
+            url = entry['url']
+            topic_id = BaibakoParser.parse_topic_id(url)
+            if not topic_id:
+                log.debug('Invalid url `{0}`, skipping'.format(url))
+                continue
+            if 'torrent_info_hash' not in entry:
+                log.debug('Entry {0} has no torrent_info_hash, skipping'.format(entry))
+                continue
+            torrent_info_hash = entry['torrent_info_hash'].lower()
+            info_hash = Baibako.get_info_hash(task.requests, topic_id)
+            log.debug('Equals hash info {0} with {1}...'.format(torrent_info_hash, info_hash))
+            if torrent_info_hash == info_hash:
+                entry.reject('Already up-to-date torrent with this infohash')
+                continue
+
+            entry['torrent_info_hash'] = info_hash
+            entry.accept()
 
     def _search_forum(self, task: Task, title: Text, db_session: sqlalchemy.orm.Session) -> BaibakoForum:
         update_required = True
@@ -639,4 +682,4 @@ def register_plugin() -> None:
     subparsers.add_parser('reset_cache', help='Reset the BaibaKo cache')
 
     plugin.register(BaibakoAuthPlugin, PLUGIN_NAME + '_auth', api_ver=2)
-    plugin.register(BaibakoPlugin, PLUGIN_NAME, interfaces=['urlrewriter', 'search'], api_ver=2)
+    plugin.register(BaibakoPlugin, PLUGIN_NAME, interfaces=['urlrewriter', 'search', 'task'], api_ver=2)
