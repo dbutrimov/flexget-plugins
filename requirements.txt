@@ -1,0 +1,4 @@
+requests
+PyYAML
+flexget
+bencode.py
