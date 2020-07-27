@@ -40,7 +40,7 @@ PLUGIN_NAME = 'baibako'
 SCHEMA_VER = 0
 
 DOMAIN = 'baibako.tv'
-BASE_URL = 'http://baibako.tv'
+BASE_URL = 'https://baibako.tv'
 
 log = logging.getLogger(PLUGIN_NAME)
 Base = versioned_base(PLUGIN_NAME, SCHEMA_VER)
