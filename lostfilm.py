@@ -34,12 +34,12 @@ elif six.PY3:
 PLUGIN_NAME = 'lostfilm'
 SCHEMA_VER = 0
 
+log = logging.getLogger(PLUGIN_NAME)
+Base = versioned_base(PLUGIN_NAME, SCHEMA_VER)
+
 BASE_URL = 'https://www.lostfilm.tv'
 API_URL = BASE_URL + '/ajaxik.php'
 COOKIES_DOMAIN = '.lostfilm.tv'
-
-log = logging.getLogger(PLUGIN_NAME)
-Base = versioned_base(PLUGIN_NAME, SCHEMA_VER)
 
 HOST_REGEXP = re.compile(r'^https?://(?:www\.)?(?:.+\.)?lostfilm\.tv', flags=re.IGNORECASE)
 
@@ -101,22 +101,26 @@ class LostFilmAuth(AuthBase):
             # session.headers['User-Agent'] = 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_12_1) ' \
             #                                 'AppleWebKit/537.36 (KHTML, like Gecko) Chrome/54.0.2840.98 Safari/537.36'
 
-            response = LostFilmApi.post(session, payload)
-            response_json = response.json()
-            if 'need_captcha' in response_json and response_json['need_captcha']:
-                raise PluginError('Unable to obtain cookies from LostFilm. Captcha is required. '
-                                  'Please logout from you account using web browser (Chrome, Firefox, Safari, etc.) '
-                                  'and login again with captcha. Then try again.')
-            if 'error' in response_json:
-                raise PluginError('Unable to obtain cookies from LostFilm. The error was caused: {0}'.format(
-                    response_json['error']))
+            try:
+                response = LostFilmApi.post(session, payload)
+                response.raise_for_status()
 
-            if 'success' in response_json and response_json['success']:
-                # username = response_json['name']
-                cookies = session.cookies.get_dict(domain=COOKIES_DOMAIN)
-                if cookies and len(cookies) > 0:
-                    return cookies
+                response_json = response.json()
+                if 'need_captcha' in response_json and response_json['need_captcha']:
+                    raise PluginError('Unable to obtain cookies from LostFilm. Captcha is required. '
+                                      'Please logout from you account using web browser (Chrome, Firefox, Safari, etc.) '
+                                      'and login again with captcha. Then try again.')
+                if 'error' in response_json:
+                    raise PluginError('Unable to obtain cookies from LostFilm. The error was caused: {0}'.format(
+                        response_json['error']))
 
+                if 'success' in response_json and response_json['success']:
+                    # username = response_json['name']
+                    cookies = session.cookies.get_dict(domain=COOKIES_DOMAIN)
+                    if cookies and len(cookies) > 0:
+                        return cookies
+            finally:
+                session.close()
             sleep(3)
 
         raise PluginError('Unable to obtain cookies from LostFilm. Looks like invalid username or password.')

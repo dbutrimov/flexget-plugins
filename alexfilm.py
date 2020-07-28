@@ -38,6 +38,8 @@ log = logging.getLogger(PLUGIN_NAME)
 Base = versioned_base(PLUGIN_NAME, SCHEMA_VER)
 
 BASE_URL = 'http://alexfilm.org'
+COOKIES_DOMAIN = '.alexfilm.org'
+
 HOST_REGEXP = re.compile(r'^https?://(?:www\.)?(?:.+\.)?alexfilm\.org', flags=re.IGNORECASE)
 
 
@@ -89,11 +91,17 @@ class AlexFilmAuth(AuthBase):
     def try_authenticate(self, payload: Dict) -> Dict:
         for _ in range(5):
             session = requests.Session()
-            session.post('http://alexfilm.org/login.php', data=payload)
-            cookies = session.cookies.get_dict(domain='.alexfilm.org')
-            if cookies and len(cookies) > 0:
-                return cookies
+            try:
+                response = session.post('{0}/login.php'.format(BASE_URL), data=payload)
+                response.raise_for_status()
+
+                cookies = session.cookies.get_dict(domain=COOKIES_DOMAIN)
+                if cookies and len(cookies) > 0:
+                    return cookies
+            finally:
+                session.close()
             sleep(3)
+
         raise PluginError('Unable to obtain cookies from AlexFilm. Looks like invalid username or password.')
 
     def __init__(self, username: Text, password: Text,
@@ -398,6 +406,11 @@ class AlexFilm(object):
         return AlexFilmParser.parse_download_id(topic_response.content)
 
     @staticmethod
+    def get_download_url(requests_: requests.Session, topic_id: int) -> str:
+        download_id = AlexFilm.get_download_id(requests_, topic_id)
+        return '{0}/dl.php?id={1}'.format(BASE_URL, download_id)
+
+    @staticmethod
     def get_marget(requests_: requests.Session, topic_id: int) -> Text:
         topic_url = AlexFilm.get_topic_url(topic_id)
         topic_response = requests_.get(topic_url)
@@ -443,10 +456,8 @@ class AlexFilmPlugin(object):
         return True
 
     def get_shows(self, task: Task) -> Optional[Set[AlexFilmShow]]:
-        serials_url = 'http://alexfilm.org/'
-
         try:
-            serials_response = task.requests.get(serials_url)
+            serials_response = task.requests.get(BASE_URL)
         except requests.RequestException as e:
             log.error("Error while fetching page: {0}".format(e))
             sleep(3)

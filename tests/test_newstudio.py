@@ -7,17 +7,24 @@ import requests
 import newstudio
 import urllib3
 
+from content_type import ContentType
+
 
 class TestNewStudio(unittest.TestCase):
     def setUp(self):
         with open("test_config.yml", 'r') as stream:
             config = yaml.safe_load(stream)
-            self._username = config['secrets']['newstudio']['username']
-            self._password = config['secrets']['newstudio']['password']
+            config = config['secrets']['newstudio']
+
+            self._username = config['username']
+            self._password = config['password']
 
             self._auth = newstudio.NewStudioAuth(self._username, self._password)
             self._requests = requests.session()
             self._requests.auth = self._auth
+
+    def tearDown(self):
+        self._requests.close()
 
     def test_forums(self):
         forums = newstudio.NewStudio.get_forums(self._requests)
@@ -66,10 +73,11 @@ class TestNewStudio(unittest.TestCase):
         print(download_url)
 
         response = self._requests.get(download_url)
+        response.raise_for_status()
+        ContentType.raise_not_torrent(response)
+
         content_type = response.headers['Content-Type']
         print(content_type)
-
-        self.assertRaises(Exception)
 
     def test_filename(self):
         http = urllib3.PoolManager()
@@ -79,8 +87,6 @@ class TestNewStudio(unittest.TestCase):
         _, params = cgi.parse_header(content_disposition)
         filename = params.get('filename')
         print(filename)
-
-
         # print(response.info().get_filename())
 
 

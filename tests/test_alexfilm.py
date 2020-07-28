@@ -3,31 +3,39 @@ import unittest
 import yaml
 
 import alexfilm
+from content_type import ContentType
 
 
 class TestAlexFilm(unittest.TestCase):
-    _requests = None
-
     def setUp(self):
         with open("test_config.yml", 'r') as stream:
             config = yaml.safe_load(stream)
+            config = config['secrets']['alexfilm']
 
-            requests_ = TestAlexFilm._requests
-            if not requests_:
-                alexfilm_config = config['secrets']['alexfilm']
-                username = alexfilm_config['username']
-                password = alexfilm_config['password']
+            self._username = config['username']
+            self._password = config['password']
 
-                requests_ = requests.Session()
-                requests_.auth = alexfilm.AlexFilmAuth(username, password)
+            self._auth = alexfilm.AlexFilmAuth(self._username, self._password)
+            self._requests = requests.Session()
+            self._requests.auth = self._auth
 
-                TestAlexFilm._requests = requests_
+    def tearDown(self):
+        self._requests.close()
 
     def test_magnet(self):
-        magnet = alexfilm.AlexFilm.get_marget(TestAlexFilm._requests, 1814)
+        magnet = alexfilm.AlexFilm.get_marget(self._requests, 1814)
         print(magnet)
 
-        self.assertRaises(Exception)
+    def test_download_torrent(self):
+        download_url = alexfilm.AlexFilm.get_download_url(self._requests, 1814)
+        print(download_url)
+
+        response = self._requests.get(download_url)
+        response.raise_for_status()
+        ContentType.raise_not_torrent(response)
+
+        content_type = response.headers['Content-Type']
+        print(content_type)
 
 
 if __name__ == '__main__':

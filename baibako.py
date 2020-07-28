@@ -31,6 +31,8 @@ from sqlalchemy import Column, Unicode, Integer, DateTime, UniqueConstraint, For
 from sqlalchemy.types import TypeDecorator, VARCHAR
 import requests
 
+from content_type import ContentType
+
 if six.PY2:
     from urlparse import urljoin
 elif six.PY3:
@@ -39,11 +41,11 @@ elif six.PY3:
 PLUGIN_NAME = 'baibako'
 SCHEMA_VER = 0
 
-DOMAIN = 'baibako.tv'
-BASE_URL = 'https://baibako.tv'
-
 log = logging.getLogger(PLUGIN_NAME)
 Base = versioned_base(PLUGIN_NAME, SCHEMA_VER)
+
+BASE_URL = 'https://baibako.tv'
+COOKIES_DOMAIN = 'baibako.tv'
 
 HOST_REGEXP = re.compile(r'^https?://(?:www\.)?(?:.+\.)?baibako\.tv', flags=re.IGNORECASE)
 
@@ -97,13 +99,16 @@ class BaibakoAuth(AuthBase):
         for _ in range(5):
             session = requests.Session()
             try:
-                session.post('{0}/takelogin.php'.format(BASE_URL), data=payload)
-                cookies = session.cookies.get_dict(domain=DOMAIN)
+                response = session.post('{0}/takelogin.php'.format(BASE_URL), data=payload)
+                response.raise_for_status()
+
+                cookies = session.cookies.get_dict(domain=COOKIES_DOMAIN)
                 if cookies and len(cookies) > 0 and 'uid' in cookies:
                     return cookies
             finally:
                 session.close()
             sleep(3)
+
         raise PluginError('Unable to obtain cookies from Baibako. Looks like invalid username or password.')
 
     def __init__(self, username: Text, password: Text,
@@ -482,9 +487,7 @@ class Baibako(object):
     def get_info_hash(requests_: requests, topic_id: int) -> Text:
         download_url = Baibako.get_download_url(topic_id)
         response = requests_.get(download_url)
-        content_type = response.headers['Content-Type']
-        if content_type != 'application/x-bittorrent':
-            raise TypeError("It is not a torrent file")
+        ContentType.raise_not_torrent(response)
 
         info = bencodepy.decode(response.content)
         return hashlib.sha1(bencodepy.encode(info[b'info'])).hexdigest().lower()

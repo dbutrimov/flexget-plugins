@@ -9,11 +9,13 @@ class TestBaibako(unittest.TestCase):
     def setUp(self):
         with open("test_config.yml", 'r') as stream:
             config = yaml.safe_load(stream)
-            self._username = config['secrets']['baibako']['username']
-            self._password = config['secrets']['baibako']['password']
+            config = config['secrets']['baibako']
+
+            self._username = config['username']
+            self._password = config['password']
 
             self._auth = baibako.BaibakoAuth(self._username, self._password)
-            self._requests = requests.session()
+            self._requests = requests.Session()
             self._requests.auth = self._auth
 
     def tearDown(self):

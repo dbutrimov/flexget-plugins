@@ -36,6 +36,9 @@ SCHEMA_VER = 0
 log = logging.getLogger(PLUGIN_NAME)
 Base = versioned_base(PLUGIN_NAME, SCHEMA_VER)
 
+BASE_URL = 'http://newstudio.tv'
+COOKIES_DOMAIN = '.newstudio.tv'
+
 HOST_REGEXP = re.compile(r'^https?://(?:www\.)?(?:.+\.)?newstudio\.tv', flags=re.IGNORECASE)
 
 
@@ -87,11 +90,17 @@ class NewStudioAuth(AuthBase):
     def try_authenticate(self, payload: Dict) -> Dict:
         for _ in range(5):
             session = requests.Session()
-            session.post('http://newstudio.tv/login.php', data=payload)
-            cookies = session.cookies.get_dict(domain='.newstudio.tv')
-            if cookies and len(cookies) > 0:
-                return cookies
+            try:
+                response = session.post('{0}/login.php'.format(BASE_URL), data=payload)
+                response.raise_for_status()
+
+                cookies = session.cookies.get_dict(domain=COOKIES_DOMAIN)
+                if cookies and len(cookies) > 0:
+                    return cookies
+            finally:
+                session.close()
             sleep(3)
+
         raise PluginError('Unable to obtain cookies from NewStudio. Looks like invalid username or password.')
 
     def __init__(self, username: Text, password: Text,
@@ -489,8 +498,6 @@ class NewStudioDatabase(object):
 
 
 class NewStudio(object):
-    BASE_URL = 'http://newstudio.tv'
-
     @staticmethod
     def add_url_params(url: Text, params: dict) -> Text:
         url_parts = list(urlparse(url))
@@ -506,19 +513,19 @@ class NewStudio(object):
 
     @staticmethod
     def get_forum_url(forum_id: int) -> Text:
-        return '{0}/viewforum.php?f={1}'.format(NewStudio.BASE_URL, forum_id)
+        return '{0}/viewforum.php?f={1}'.format(BASE_URL, forum_id)
 
     @staticmethod
     def get_topic_url(topic_id: int) -> Text:
-        return '{0}/viewtopic.php?t={1}'.format(NewStudio.BASE_URL, topic_id)
+        return '{0}/viewtopic.php?t={1}'.format(BASE_URL, topic_id)
 
     @staticmethod
     def get_download_url(download_id: int) -> Text:
-        return '{0}/download.php?id={1}'.format(NewStudio.BASE_URL, download_id)
+        return '{0}/download.php?id={1}'.format(BASE_URL, download_id)
 
     @staticmethod
     def get_forums(requests_: requests) -> Set[NewStudioForum]:
-        response = requests_.get(NewStudio.BASE_URL)
+        response = requests_.get(BASE_URL)
         html = response.content
         return NewStudioParser.parse_forums(html)
 
