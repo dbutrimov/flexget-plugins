@@ -2,7 +2,7 @@ import requests
 import unittest
 import yaml
 
-import baibako
+from .context import baibako
 
 
 class TestBaibako(unittest.TestCase):

@@ -87,6 +87,11 @@ class LostFilmAccount(Base):
     cookies = Column(JSONEncodedDict)
     expiry_time = Column(DateTime, nullable=False)
 
+    def __init__(self, username: str, cookies: dict, expiry_time: datetime) -> None:
+        self.username = username
+        self.cookies = cookies
+        self.expiry_time = expiry_time
+
 
 class LostFilmAuth(AuthBase):
     """
@@ -413,6 +418,12 @@ class DbLostFilmShow(Base):
     title = Column(Unicode, index=True, nullable=False)
     updated_at = Column(DateTime, nullable=False)
 
+    def __init__(self, id_: int, slug: str, title: str, updated_at: datetime) -> None:
+        self.id = id_
+        self.slug = slug
+        self.title = title
+        self.updated_at = updated_at
+
 
 class DbLostFilmShowAlternateName(Base):
     __tablename__ = 'lostfilm_show_alternate_names'
@@ -420,6 +431,10 @@ class DbLostFilmShowAlternateName(Base):
     show_id = Column(Integer, ForeignKey('lostfilm_shows.id'), nullable=False)
     title = Column(Unicode, index=True, nullable=False)
     __table_args__ = (UniqueConstraint('show_id', 'title', name='_show_title_uc'),)
+
+    def __init__(self, show_id: int, title: str) -> None:
+        self.show_id = show_id
+        self.title = title
 
 
 class DbLostFilmEpisode(Base):
@@ -431,6 +446,13 @@ class DbLostFilmEpisode(Base):
     title = Column(Unicode, nullable=False)
     updated_at = Column(DateTime, nullable=False)
     __table_args__ = (UniqueConstraint('show_id', 'season', 'episode', name='_uc_show_episode'),)
+
+    def __init__(self, show_id: int, season: int, episode: int, title: str, updated_at: datetime) -> None:
+        self.show_id = show_id
+        self.season = season
+        self.episode = episode
+        self.title = title
+        self.updated_at = updated_at
 
 
 class LostFilmDatabase(object):
@@ -457,7 +479,7 @@ class LostFilmDatabase(object):
         if shows and len(shows) > 0:
             now = datetime.now()
             for show in shows:
-                db_show = DbLostFilmShow(id=show.id, slug=show.slug, title=show.title, updated_at=now)
+                db_show = DbLostFilmShow(id_=show.id, slug=show.slug, title=show.title, updated_at=now)
                 db_session.add(db_show)
 
                 if show.alternate_titles:

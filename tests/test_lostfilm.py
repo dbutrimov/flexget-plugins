@@ -2,8 +2,7 @@ import requests
 import unittest
 import yaml
 
-import lostfilm
-from content_type import ContentType
+from .context import lostfilm, raise_not_torrent
 
 
 class TestLostFilm(unittest.TestCase):
@@ -56,7 +55,7 @@ class TestLostFilm(unittest.TestCase):
 
             response = self._requests.get(torrent.url)
             response.raise_for_status()
-            ContentType.raise_not_torrent(response)
+            raise_not_torrent(response)
 
             content_type = response.headers['Content-Type']
             print(content_type)

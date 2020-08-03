@@ -80,6 +80,11 @@ class AlexFilmAccount(Base):
     cookies = Column(JSONEncodedDict)
     expiry_time = Column(DateTime, nullable=False)
 
+    def __init__(self, username: str, cookies: dict, expiry_time: datetime) -> None:
+        self.username = username
+        self.cookies = cookies
+        self.expiry_time = expiry_time
+
 
 class AlexFilmAuth(AuthBase):
     """
@@ -219,6 +224,12 @@ class DbAlexFilmShow(Base):
     url = Column(Unicode, nullable=False)
     updated_at = Column(DateTime, nullable=False)
 
+    def __init__(self, id_: int, title: str, url: str, updated_at: datetime) -> None:
+        self.id = id_
+        self.title = title
+        self.url = url
+        self.updated_at = updated_at
+
 
 class DbAlexFilmShowAlternateName(Base):
     __tablename__ = 'alexfilm_show_alternate_names'
@@ -226,6 +237,10 @@ class DbAlexFilmShowAlternateName(Base):
     show_id = Column(Integer, ForeignKey('alexfilm_shows.id'), nullable=False)
     title = Column(Unicode, index=True, nullable=False)
     __table_args__ = (UniqueConstraint('show_id', 'title', name='_show_title_uc'),)
+
+    def __init__(self, show_id: int, title: str) -> None:
+        self.show_id = show_id
+        self.title = title
 
 
 class AlexFilmShow(object):
@@ -325,7 +340,7 @@ class AlexFilmDatabase(object):
         if shows and len(shows) > 0:
             now = datetime.now()
             for show in shows:
-                db_show = DbAlexFilmShow(id=show.show_id, title=show.titles[0], url=show.url, updated_at=now)
+                db_show = DbAlexFilmShow(id_=show.show_id, title=show.titles[0], url=show.url, updated_at=now)
                 db_session.add(db_show)
 
                 for index, item in enumerate(show.titles[1:], start=1):

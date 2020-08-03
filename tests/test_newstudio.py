@@ -4,10 +4,8 @@ import unittest
 import yaml
 import requests
 
-import newstudio
+from .context import newstudio, raise_not_torrent
 import urllib3
-
-from content_type import ContentType
 
 
 class TestNewStudio(unittest.TestCase):
@@ -74,7 +72,7 @@ class TestNewStudio(unittest.TestCase):
 
         response = self._requests.get(download_url)
         response.raise_for_status()
-        ContentType.raise_not_torrent(response)
+        raise_not_torrent(response)
 
         content_type = response.headers['Content-Type']
         print(content_type)

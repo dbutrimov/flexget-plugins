@@ -31,7 +31,7 @@ from sqlalchemy import Column, Unicode, Integer, DateTime, UniqueConstraint, For
 from sqlalchemy.types import TypeDecorator, VARCHAR
 import requests
 
-from .content_type import ContentType
+from .content_type import raise_not_torrent
 
 if six.PY2:
     from urlparse import urljoin
@@ -86,6 +86,11 @@ class BaibakoAccount(Base):
     username = Column(Unicode, index=True, nullable=False, unique=True)
     cookies = Column(JSONEncodedDict)
     expiry_time = Column(DateTime, nullable=False)
+
+    def __init__(self, username: str, cookies: dict, expiry_time: datetime) -> None:
+        self.username = username
+        self.cookies = cookies
+        self.expiry_time = expiry_time
 
 
 class BaibakoAuth(AuthBase):
@@ -353,6 +358,11 @@ class DbBaibakoForum(Base):
     title = Column(Unicode, index=True, nullable=False)
     updated_at = Column(DateTime, nullable=False)
 
+    def __init__(self, id_: int, title: str, updated_at: datetime) -> None:
+        self.id = id_
+        self.title = title
+        self.updated_at = updated_at
+
 
 class DbBaibakoTopic(Base):
     __tablename__ = 'baibako_topics'
@@ -360,6 +370,12 @@ class DbBaibakoTopic(Base):
     forum_id = Column(Integer, nullable=False)
     title = Column(Unicode, nullable=False)
     updated_at = Column(DateTime, nullable=False)
+
+    def __init__(self, id_: int, forum_id: int, title: str, updated_at: datetime) -> None:
+        self.id = id_
+        self.forum_id = forum_id
+        self.title = title
+        self.updated_at = updated_at
 
 
 class BaibakoDatabase(object):
@@ -385,7 +401,7 @@ class BaibakoDatabase(object):
         if forums and len(forums) > 0:
             now = datetime.now()
             for forum in forums:
-                db_forum = DbBaibakoForum(id=forum.id, title=forum.title, updated_at=now)
+                db_forum = DbBaibakoForum(id_=forum.id, title=forum.title, updated_at=now)
                 db_session.add(db_forum)
 
             db_session.commit()
@@ -439,7 +455,7 @@ class BaibakoDatabase(object):
         if topics and len(topics) > 0:
             now = datetime.now()
             for topic in topics:
-                db_topic = DbBaibakoTopic(id=topic.id, forum_id=forum_id, title=topic.title, updated_at=now)
+                db_topic = DbBaibakoTopic(id_=topic.id, forum_id=forum_id, title=topic.title, updated_at=now)
                 db_session.add(db_topic)
 
             db_session.commit()
@@ -487,7 +503,7 @@ class Baibako(object):
     def get_info_hash(requests_: requests, topic_id: int) -> Text:
         download_url = Baibako.get_download_url(topic_id)
         response = requests_.get(download_url)
-        ContentType.raise_not_torrent(response)
+        raise_not_torrent(response)
 
         info = bencodepy.decode(response.content)
         return hashlib.sha1(bencodepy.encode(info[b'info'])).hexdigest().lower()

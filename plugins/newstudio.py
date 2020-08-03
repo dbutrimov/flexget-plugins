@@ -79,6 +79,11 @@ class NewStudioAccount(Base):
     cookies = Column(JSONEncodedDict)
     expiry_time = Column(DateTime, nullable=False)
 
+    def __init__(self, username: str, cookies: dict, expiry_time: datetime) -> None:
+        self.username = username
+        self.cookies = cookies
+        self.expiry_time = expiry_time
+
 
 class NewStudioAuth(AuthBase):
     """
@@ -391,6 +396,11 @@ class DbNewStudioForum(Base):
     title = Column(Unicode, index=True, nullable=False)
     updated_at = Column(DateTime, nullable=False)
 
+    def __init__(self, id_: int, title: str, updated_at: datetime) -> None:
+        self.id = id_
+        self.title = title
+        self.updated_at = updated_at
+
 
 class DbNewStudioTopic(Base):
     __tablename__ = 'newstudio_topics'
@@ -399,6 +409,13 @@ class DbNewStudioTopic(Base):
     title = Column(Unicode, index=True, nullable=False)
     download_id = Column(Integer, nullable=False)
     updated_at = Column(DateTime, nullable=False)
+
+    def __init__(self, id_: int, forum_id: int, title: str, download_id: int, updated_at: datetime) -> None:
+        self.id = id_
+        self.forum_id = forum_id
+        self.title = title
+        self.download_id = download_id
+        self.updated_at = updated_at
 
 
 class NewStudioDatabase(object):
@@ -424,7 +441,7 @@ class NewStudioDatabase(object):
         if forums and len(forums) > 0:
             now = datetime.now()
             for forum in forums:
-                db_forum = DbNewStudioForum(id=forum.id, title=forum.title, updated_at=now)
+                db_forum = DbNewStudioForum(id_=forum.id, title=forum.title, updated_at=now)
                 db_session.add(db_forum)
 
             db_session.commit()
@@ -479,7 +496,7 @@ class NewStudioDatabase(object):
         if topics and len(topics) > 0:
             now = datetime.now()
             for topic in topics:
-                db_topic = DbNewStudioTopic(id=topic.id, forum_id=forum_id, title=topic.title,
+                db_topic = DbNewStudioTopic(id_=topic.id, forum_id=forum_id, title=topic.title,
                                             download_id=topic.download_id, updated_at=now)
                 db_session.add(db_topic)
 
