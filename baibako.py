@@ -31,7 +31,7 @@ from sqlalchemy import Column, Unicode, Integer, DateTime, UniqueConstraint, For
 from sqlalchemy.types import TypeDecorator, VARCHAR
 import requests
 
-from content_type import ContentType
+from .content_type import ContentType
 
 if six.PY2:
     from urlparse import urljoin
