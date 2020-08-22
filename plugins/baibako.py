@@ -489,20 +489,21 @@ class Baibako(object):
     def get_forums(requests_: requests) -> Set[BaibakoForum]:
         url = '{0}/serials.php'.format(BASE_URL)
         response = requests_.get(url)
-        html = response.content
-        return BaibakoParser.parse_forums(html)
+        response.raise_for_status()
+        return BaibakoParser.parse_forums(response.content)
 
     @staticmethod
     def get_forum_topics(forum_id: int, tab: Text, requests_: requests) -> Set[BaibakoTopic]:
         url = '{0}/serial.php?id={1}&tab={2}'.format(BASE_URL, forum_id, tab)
         response = requests_.get(url)
-        html = response.content
-        return BaibakoParser.parse_topics(html)
+        response.raise_for_status()
+        return BaibakoParser.parse_topics(response.content)
 
     @staticmethod
     def get_info_hash(requests_: requests, topic_id: int) -> Text:
         download_url = Baibako.get_download_url(topic_id)
         response = requests_.get(download_url)
+        response.raise_for_status()
         raise_not_torrent(response)
 
         info = bencodepy.decode(response.content)

@@ -543,8 +543,8 @@ class NewStudio(object):
     @staticmethod
     def get_forums(requests_: requests) -> Set[NewStudioForum]:
         response = requests_.get(BASE_URL)
-        html = response.content
-        return NewStudioParser.parse_forums(html)
+        response.raise_for_status()
+        return NewStudioParser.parse_forums(response.content)
 
     @staticmethod
     def get_forum_topics(forum_id: int, requests_: requests) -> Set[NewStudioTopic]:
@@ -559,6 +559,7 @@ class NewStudio(object):
                 url = NewStudio.add_url_params(url, {'start': start})
             url = NewStudio.add_timestamp(url)
             response = requests_.get(url)
+            response.raise_for_status()
             html = response.content
             sleep(3)
 
@@ -599,6 +600,7 @@ class NewStudioPlugin(object):
 
         try:
             topic_response = task.requests.get(topic_url)
+            topic_response.raise_for_status()
         except requests.RequestException as e:
             reject_reason = "Error while fetching page: {0}".format(e)
             log.error(reject_reason)

@@ -418,6 +418,7 @@ class AlexFilm(object):
     def get_download_id(requests_: requests.Session, topic_id: int) -> int:
         topic_url = AlexFilm.get_topic_url(topic_id)
         topic_response = requests_.get(topic_url)
+        topic_response.raise_for_status()
         return AlexFilmParser.parse_download_id(topic_response.content)
 
     @staticmethod
@@ -429,6 +430,7 @@ class AlexFilm(object):
     def get_marget(requests_: requests.Session, topic_id: int) -> Text:
         topic_url = AlexFilm.get_topic_url(topic_id)
         topic_response = requests_.get(topic_url)
+        topic_response.raise_for_status()
         return AlexFilmParser.parse_magnet(topic_response.content)
 
 
@@ -448,6 +450,7 @@ class AlexFilmPlugin(object):
 
         try:
             topic_response = task.requests.get(topic_url)
+            topic_response.raise_for_status()
         except requests.RequestException as e:
             reject_reason = "Error while fetching page: {0}".format(e)
             log.error(reject_reason)
@@ -473,6 +476,7 @@ class AlexFilmPlugin(object):
     def get_shows(self, task: Task) -> Optional[Set[AlexFilmShow]]:
         try:
             serials_response = task.requests.get(BASE_URL)
+            serials_response.raise_for_status()
         except requests.RequestException as e:
             log.error("Error while fetching page: {0}".format(e))
             sleep(3)
@@ -540,6 +544,7 @@ class AlexFilmPlugin(object):
 
             try:
                 serial_response = task.requests.get(show.url)
+                serial_response.raise_for_status()
             except requests.RequestException as e:
                 log.error("Error while fetching page: {0}".format(e))
                 sleep(3)
