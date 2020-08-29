@@ -1,15 +1,15 @@
 # -*- coding: utf-8 -*-
 
-from __future__ import unicode_literals, division, absolute_import
-from builtins import *  # noqa pylint: disable=unused-import, redefined-builtin
-from typing import Dict, Text, Optional, Set
-
-import six
 import json
 import logging
 import re
 from datetime import datetime, timedelta
 from time import sleep, time
+from typing import Optional, Text, Dict, Set
+from urllib.parse import urljoin, urlparse, urlunparse, urlencode, parse_qsl
+
+import requests
+import sqlalchemy.orm
 from bs4 import BeautifulSoup
 from flexget import plugin
 from flexget.db_schema import versioned_base
@@ -18,17 +18,9 @@ from flexget.event import event
 from flexget.manager import Session
 from flexget.plugin import PluginError
 from flexget.task import Task
-from flexget.utils import requests
 from requests.auth import AuthBase
 from sqlalchemy import Column, Unicode, Integer, DateTime, ForeignKey, func
 from sqlalchemy.types import TypeDecorator, VARCHAR
-import sqlalchemy.orm
-import requests
-
-if six.PY2:
-    from urlparse import urljoin, urlparse, urlunparse, urlencode, parse_qsl
-elif six.PY3:
-    from urllib.parse import urljoin, urlparse, urlunparse, urlencode, parse_qsl
 
 PLUGIN_NAME = 'newstudio'
 SCHEMA_VER = 0
@@ -42,7 +34,7 @@ COOKIES_DOMAIN = '.newstudio.tv'
 HOST_REGEXP = re.compile(r'^https?://(?:www\.)?(?:.+\.)?newstudio\.tv', flags=re.IGNORECASE)
 
 
-def process_url(url, base_url):
+def process_url(url: Text, base_url: Text) -> Text:
     return urljoin(base_url, url)
 
 

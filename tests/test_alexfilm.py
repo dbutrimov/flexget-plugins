@@ -1,5 +1,8 @@
-import requests
+# -*- coding: utf-8 -*-
+
 import unittest
+
+import requests
 import yaml
 
 from .context import alexfilm, raise_not_torrent

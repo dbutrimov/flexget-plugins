@@ -1,35 +1,28 @@
 # -*- coding: utf-8 -*-
 
-from __future__ import unicode_literals, division, absolute_import
-from builtins import *  # noqa pylint: disable=unused-import, redefined-builtin
-
-import six
-from typing import Optional, Text, List, Dict, Any, Set
 import json
 import logging
 import re
 from datetime import datetime, timedelta
 from time import sleep
+from typing import Optional, Text, List, Dict, Any, Set
+from urllib.parse import urljoin
+
 import bs4
+import requests
+import sqlalchemy.orm
 from flexget import options
 from flexget import plugin
 from flexget.db_schema import versioned_base
 from flexget.entry import Entry
 from flexget.event import event
-from flexget.terminal import console
 from flexget.manager import Session, Manager
-from flexget.task import Task
 from flexget.plugin import PluginError
-import requests
+from flexget.task import Task
+from flexget.terminal import console
 from requests.auth import AuthBase
 from sqlalchemy import Column, Unicode, Integer, DateTime, UniqueConstraint, ForeignKey, func
-import sqlalchemy.orm
 from sqlalchemy.types import TypeDecorator, VARCHAR
-
-if six.PY2:
-    from urlparse import urljoin
-elif six.PY3:
-    from urllib.parse import urljoin
 
 PLUGIN_NAME = 'lostfilm'
 SCHEMA_VER = 0

@@ -1,16 +1,15 @@
 # -*- coding: utf-8 -*-
 
-from __future__ import unicode_literals, division, absolute_import
-from builtins import *  # noqa pylint: disable=unused-import, redefined-builtin
-from typing import Text, Dict, Optional, List, Set
-
-import six
 import json
 import logging
 import re
 from datetime import datetime, timedelta
 from time import sleep
+from typing import Text, Dict, Optional, List, Set
+from urllib.parse import urljoin
 
+import requests
+import sqlalchemy.orm
 from bs4 import BeautifulSoup
 from flexget import plugin
 from flexget.db_schema import versioned_base
@@ -19,17 +18,9 @@ from flexget.event import event
 from flexget.manager import Session
 from flexget.plugin import PluginError
 from flexget.task import Task
-from flexget.utils import requests
 from requests.auth import AuthBase
 from sqlalchemy import Column, Unicode, Integer, DateTime, UniqueConstraint, ForeignKey, func
 from sqlalchemy.types import TypeDecorator, VARCHAR
-import sqlalchemy.orm
-import requests
-
-if six.PY2:
-    from urlparse import urljoin
-elif six.PY3:
-    from urllib.parse import urljoin
 
 PLUGIN_NAME = 'alexfilm'
 SCHEMA_VER = 0

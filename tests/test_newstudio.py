@@ -1,11 +1,13 @@
 # -*- coding: utf-8 -*-
+
 import cgi
 import unittest
-import yaml
+
 import requests
+import urllib3
+import yaml
 
 from .context import newstudio, raise_not_torrent
-import urllib3
 
 
 class TestNewStudio(unittest.TestCase):
