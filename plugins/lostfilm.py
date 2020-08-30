@@ -677,14 +677,14 @@ class LostFilm(object):
         url = LostFilm.get_episode_url(show_slug, season, episode)
         response = requests_.get(url)
         response.raise_for_status()
-        return LostFilmParser.parse_episode_page(response.content)
+        return LostFilmParser.parse_episode_page(response.text)
 
     @staticmethod
     def get_show_episodes(requests_: requests.Session, show_slug: Text) -> List[LostFilmEpisode]:
         url = LostFilm.get_seasons_url(show_slug)
         response = requests_.get(url)
         response.raise_for_status()
-        return LostFilmParser.parse_seasons_page(response.content)
+        return LostFilmParser.parse_seasons_page(response.text)
 
     @staticmethod
     def get_episode_torrents(requests_: requests.Session,
@@ -692,7 +692,7 @@ class LostFilm(object):
         torrents_url = LostFilm.get_episode_torrents_url(show_id, season, episode)
         response = LostFilm._get_response(requests_, torrents_url)
         response.raise_for_status()
-        return LostFilmParser.parse_torrents_page(response.content)
+        return LostFilmParser.parse_torrents_page(response.text)
 
 
 class LostFilmPlugin(object):

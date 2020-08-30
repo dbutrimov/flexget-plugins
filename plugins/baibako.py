@@ -26,7 +26,7 @@ from requests.auth import AuthBase
 from sqlalchemy import Column, Unicode, Integer, DateTime, func
 from sqlalchemy.types import TypeDecorator, VARCHAR
 
-from .content_type import raise_not_torrent
+from .utils import ContentType
 
 PLUGIN_NAME = 'baibako'
 SCHEMA_VER = 0
@@ -494,7 +494,7 @@ class Baibako(object):
         download_url = Baibako.get_download_url(topic_id)
         response = requests_.get(download_url)
         response.raise_for_status()
-        raise_not_torrent(response)
+        ContentType.raise_not_torrent(response)
 
         info = bencodepy.decode(response.content)
         return hashlib.sha1(bencodepy.encode(info[b'info'])).hexdigest().lower()

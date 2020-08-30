@@ -45,11 +45,11 @@ class TestBaibako(unittest.TestCase):
                     topic_info.quality
                 ))
             except Exception as e:
-                print(u"\033[91m[ERROR]\033[0m {0}".format(e.message))
+                print(u"\033[91m[ERROR]\033[0m {0}".format(e))
 
     def test_download_torrent(self):
-        hash = baibako.Baibako.get_info_hash(self._requests, 36068)
-        print("hash: {0}".format(hash))
+        info_hash = baibako.Baibako.get_info_hash(self._requests, 36068)
+        print("hash: {0}".format(info_hash))
 
 
 if __name__ == '__main__':

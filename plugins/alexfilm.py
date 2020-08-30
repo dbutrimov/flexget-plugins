@@ -410,7 +410,7 @@ class AlexFilm(object):
         topic_url = AlexFilm.get_topic_url(topic_id)
         topic_response = requests_.get(topic_url)
         topic_response.raise_for_status()
-        return AlexFilmParser.parse_download_id(topic_response.content)
+        return AlexFilmParser.parse_download_id(topic_response.text)
 
     @staticmethod
     def get_download_url(requests_: requests.Session, topic_id: int) -> str:
@@ -422,7 +422,7 @@ class AlexFilm(object):
         topic_url = AlexFilm.get_topic_url(topic_id)
         topic_response = requests_.get(topic_url)
         topic_response.raise_for_status()
-        return AlexFilmParser.parse_magnet(topic_response.content)
+        return AlexFilmParser.parse_magnet(topic_response.text)
 
 
 class AlexFilmPlugin(object):
