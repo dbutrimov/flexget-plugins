@@ -1,6 +1,6 @@
-# flexget-plugins-ruvoice
+# flexget-plugins
 
-**flexget-plugins-ruvoice** is the bundle of search/urlrewrite pugins for FlexGet.
+**flexget-plugins** is the bundle of search/urlrewrite pugins for FlexGet.
 
 ---
 
@@ -78,7 +78,7 @@ baibako:
 
 ## AlexFilm
 
-Web site: [alexfilm.cc](http://alexfilm.cc)
+Web site: [alexfilm.cc](http://alexfilm.org)
 
 ### Configuration
 
