@@ -25,7 +25,7 @@ class TestAlexFilm(unittest.TestCase):
         self._requests.close()
 
     def test_magnet(self):
-        magnet = alexfilm.AlexFilm.get_marget(self._requests, 1814)
+        magnet = alexfilm.AlexFilm.get_magnet(self._requests, 1814)
         print(magnet)
 
     def test_download_torrent(self):

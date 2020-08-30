@@ -418,7 +418,7 @@ class AlexFilm(object):
         return '{0}/dl.php?id={1}'.format(BASE_URL, download_id)
 
     @staticmethod
-    def get_marget(requests_: requests.Session, topic_id: int) -> Text:
+    def get_magnet(requests_: requests.Session, topic_id: int) -> Text:
         topic_url = AlexFilm.get_topic_url(topic_id)
         topic_response = requests_.get(topic_url)
         topic_response.raise_for_status()
