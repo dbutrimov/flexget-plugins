@@ -1,6 +1,5 @@
 # -*- coding: utf-8 -*-
 
-import json
 import logging
 import re
 from datetime import datetime, timedelta
@@ -8,7 +7,6 @@ from time import sleep
 from typing import Optional, Set, Text
 from urllib.parse import urljoin
 
-import requests
 from bs4 import BeautifulSoup
 from flexget import plugin
 from flexget.components.sites import utils
@@ -17,9 +15,11 @@ from flexget.entry import Entry
 from flexget.event import event
 from flexget.manager import Session
 from flexget.plugin import PluginError
+from requests import Session as RequestsSession, RequestException
 from requests.auth import AuthBase
 from sqlalchemy import Column, Unicode, Integer, DateTime
-from sqlalchemy.types import TypeDecorator, VARCHAR
+
+from .utils import JSONEncodedDict
 
 PLUGIN_NAME = 'kinozal'
 SCHEMA_VER = 0
@@ -33,36 +33,11 @@ COOKIES_DOMAIN = '.kinozal.tv'
 HOST_REGEXP = re.compile(r'^https?://(?:www\.)?(?:.+\.)?kinozal\.tv', flags=re.IGNORECASE)
 
 
-def process_url(url: Text, base_url: Text) -> Text:
-    return urljoin(base_url, url)
-
-
 def validate_host(url: Text) -> bool:
     return HOST_REGEXP.match(url) is not None
 
 
 # region KinozalAuthPlugin
-class JSONEncodedDict(TypeDecorator):
-    """
-    Represents an immutable structure as a json-encoded string.
-
-    Usage:
-        JSONEncodedDict(255)
-    """
-
-    impl = VARCHAR
-
-    def process_bind_param(self, value, dialect):
-        if value is not None:
-            value = json.dumps(value)
-        return value
-
-    def process_result_value(self, value, dialect):
-        if value is not None:
-            value = json.loads(value)
-        return value
-
-
 class KinozalAccount(Base):
     __tablename__ = 'kinozal_accounts'
     id = Column(Integer, primary_key=True, autoincrement=True, nullable=False)
@@ -79,16 +54,14 @@ class KinozalAccount(Base):
 class KinozalAuth(AuthBase):
     def try_authenticate(self, payload):
         for _ in range(5):
-            session = requests.Session()
-            try:
+            with RequestsSession() as session:
                 response = session.post('{0}/takelogin.php'.format(BASE_URL), data=payload)
                 response.raise_for_status()
 
                 cookies = session.cookies.get_dict(domain=COOKIES_DOMAIN)
                 if cookies and len(cookies) > 0:
                     return cookies
-            finally:
-                session.close()
+
             sleep(3)
 
         raise PluginError('Unable to obtain cookies from Kinozal. Looks like invalid username or password.')
@@ -323,7 +296,7 @@ class KinozalParser(object):
                     if link_node:
                         title = link_node.text
                         url = link_node.get('href')
-                        url = process_url(url, base_url)
+                        url = urljoin(base_url, url)
                         url_match = DETAILS_URL_REGEXP.search(url)
                         if not url_match:
                             continue
@@ -489,7 +462,7 @@ class KinozalPlugin(object):
                                                category=category, quality=quality,
                                                filter_=filter, sort_by=sort_by,
                                                sort_order=sort_order)
-            except requests.RequestException as e:
+            except RequestException as e:
                 log.error("Error while fetching page: {0}".format(e))
                 sleep(3)
                 continue
