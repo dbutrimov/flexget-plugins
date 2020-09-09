@@ -4,7 +4,7 @@ import logging
 import re
 from datetime import datetime, timedelta
 from time import sleep
-from typing import Optional, Set, Text
+from typing import Optional, Set, Text, Dict
 from urllib.parse import urljoin
 
 from bs4 import BeautifulSoup
@@ -15,9 +15,10 @@ from flexget.entry import Entry
 from flexget.event import event
 from flexget.manager import Session
 from flexget.plugin import PluginError
-from requests import Session as RequestsSession, RequestException
+from requests import Session as RequestsSession, PreparedRequest, RequestException
 from requests.auth import AuthBase
 from sqlalchemy import Column, Unicode, Integer, DateTime
+from sqlalchemy.orm import Session as OrmSession
 
 from .utils import JSONEncodedDict
 
@@ -66,26 +67,26 @@ class KinozalAuth(AuthBase):
 
         raise PluginError('Unable to obtain cookies from Kinozal. Looks like invalid username or password.')
 
-    def __init__(self, username, password, cookies=None, db_session=None):
+    def __init__(self, username: Text, password: Text, cookies: Dict = None, session: OrmSession = None) -> None:
         if cookies is None:
             log.debug('Kinozal cookie not found. Requesting new one.')
             payload_ = {'username': username, 'password': password}
             self.__cookies = self.try_authenticate(payload_)
-            if db_session:
-                db_session.add(
+            if session:
+                session.add(
                     KinozalAccount(
                         username=username,
                         cookies=self.__cookies,
                         expiry_time=datetime.now() + timedelta(days=1)))
-                db_session.commit()
+                session.commit()
                 # else:
                 #     raise ValueError(
-                #         'db_session can not be None if cookies is None')
+                #         'session can not be None if cookies is None')
         else:
             log.debug('Using previously saved cookie.')
             self.__cookies = cookies
 
-    def __call__(self, request):
+    def __call__(self, request: PreparedRequest) -> PreparedRequest:
         # request.prepare_cookies(self.__cookies)
         if validate_host(request.url):
             request.headers['Cookie'] = '; '.join('{0}={1}'.format(key, val) for key, val in self.__cookies.items())
@@ -111,18 +112,18 @@ class KinozalAuthPlugin(object):
 
     auth_cache = {}
 
-    def try_find_cookie(self, db_session, username):
-        account = db_session.query(KinozalAccount).filter(KinozalAccount.username == username).first()
+    def try_find_cookie(self, session: OrmSession, username: Text) -> Optional[Dict]:
+        account = session.query(KinozalAccount).filter(KinozalAccount.username == username).first()
         if account:
             if account.expiry_time < datetime.now():
-                db_session.delete(account)
-                db_session.commit()
+                session.delete(account)
+                session.commit()
                 return None
             return account.cookies
         else:
             return None
 
-    def get_auth_handler(self, config):
+    def get_auth_handler(self, config: Dict) -> Dict:
         username = config.get('username')
         if not username or len(username) <= 0:
             raise PluginError('Username are not configured.')
@@ -130,13 +131,13 @@ class KinozalAuthPlugin(object):
         if not password or len(password) <= 0:
             raise PluginError('Password are not configured.')
 
-        db_session = Session()
-        cookies = self.try_find_cookie(db_session, username)
-        if username not in self.auth_cache:
-            auth_handler = KinozalAuth(username, password, cookies, db_session)
-            self.auth_cache[username] = auth_handler
-        else:
-            auth_handler = self.auth_cache[username]
+        with Session() as session:
+            cookies = self.try_find_cookie(session, username)
+            if username not in self.auth_cache:
+                auth_handler = KinozalAuth(username, password, cookies, session)
+                self.auth_cache[username] = auth_handler
+            else:
+                auth_handler = self.auth_cache[username]
 
         return auth_handler
 
@@ -320,13 +321,13 @@ class KinozalParser(object):
 
 class Kinozal(object):
     @staticmethod
-    def get_info_hash(requests_, topic_id: int) -> Optional[Text]:
-        response = requests_.get('{0}/get_srv_details.php?id={1}&action=2'.format(BASE_URL, topic_id))
+    def get_info_hash(requests: RequestsSession, topic_id: int) -> Optional[Text]:
+        response = requests.get('{0}/get_srv_details.php?id={1}&action=2'.format(BASE_URL, topic_id))
         response.raise_for_status()
         return KinozalParser.parse_info_hash(response.text)
 
     @staticmethod
-    def search(requests_, search_string, page=0,
+    def search(requests: RequestsSession, search_string, page=0,
                category=DEFAULT_CATEGORY, quality=DEFAULT_QUALITY,
                filter_=DEFAULT_FILTER, sort_by=DEFAULT_SORT,
                sort_order=DEFAULT_SORT_ORDER) -> Optional[Set[KinozalSearchEntry]]:
@@ -342,7 +343,7 @@ class Kinozal(object):
             'f': sort_order
         }
 
-        response = requests_.get('{0}/browse.php'.format(BASE_URL), params=payload)
+        response = requests.get('{0}/browse.php'.format(BASE_URL), params=payload)
         response.raise_for_status()
 
         return KinozalParser.parse_search_result(response.text, response.url)
