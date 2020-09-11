@@ -642,7 +642,7 @@ class NewStudioPlugin(object):
 
                 forum = self._search_forum(task, search_title, session)
                 if not forum:
-                    log.warning("Unknown forum: {0} s{1:02d}e{2:02d}".format(search_title, search_season, search_episode))
+                    log.debug("Unknown forum: {0} s{1:02d}e{2:02d}".format(search_title, search_season, search_episode))
                     continue
 
                 try:

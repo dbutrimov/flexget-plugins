@@ -819,7 +819,7 @@ class LostFilmPlugin(object):
 
                 episode = self._search_show_episode(task, session, show, search_season, search_episode)
                 if not episode:
-                    log.warning("Unknown episode: {0} s{1:02d}e{2:02d}".format(search_title, search_season, search_episode))
+                    log.debug("Unknown episode: {0} s{1:02d}e{2:02d}".format(search_title, search_season, search_episode))
                     continue
 
                 episode_id = episode.get_episode_id()
