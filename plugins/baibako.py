@@ -36,6 +36,8 @@ COOKIES_DOMAIN = 'baibako.tv'
 
 HOST_REGEXP = re.compile(r'^https?://(?:www\.)?(?:.+\.)?baibako\.tv', flags=re.IGNORECASE)
 
+USER_AGENT = 'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/45.0.2454.85 Safari/537.36'
+
 
 def validate_host(url: Text) -> bool:
     return HOST_REGEXP.match(url) is not None
@@ -65,6 +67,8 @@ class BaibakoAuth(AuthBase):
     def try_authenticate(self, payload: Dict) -> Dict:
         for _ in range(5):
             with RequestsSession() as session:
+                session.headers.update({'User-Agent': USER_AGENT})
+
                 response = session.post('{0}/takelogin.php'.format(BASE_URL), data=payload)
                 response.raise_for_status()
 
@@ -98,7 +102,10 @@ class BaibakoAuth(AuthBase):
     def __call__(self, request: PreparedRequest) -> PreparedRequest:
         # request.prepare_cookies(self.__cookies)
         if validate_host(request.url):
-            request.headers['Cookie'] = '; '.join('{0}={1}'.format(key, val) for key, val in self.__cookies.items())
+            request.headers.update({
+                'User-Agent': USER_AGENT,
+                'Cookie': '; '.join('{0}={1}'.format(key, val) for key, val in self.__cookies.items())
+            })
         return request
 
 
@@ -241,9 +248,9 @@ class BaibakoParser(object):
     @staticmethod
     def parse_forums(html: Text) -> Set[BaibakoForum]:
         soup = BeautifulSoup(html, 'html.parser')
-        table_node = soup.find('table', class_=TABLE_CLASS_REGEXP)
+        table_node = soup.find('div', class_="row serialsearch")
         if not table_node:
-            raise ParsingError('Node <table class=`table.*`> are not found')
+            raise ParsingError('Node <div class=`row serialsearch`> are not found')
 
         forums = set()
 
@@ -449,14 +456,22 @@ class Baibako(object):
         url = '{0}/serials.php'.format(BASE_URL)
         response = requests.get(url)
         response.raise_for_status()
-        return BaibakoParser.parse_forums(response.text)
+        try:
+            return BaibakoParser.parse_forums(response.text)
+        except ParsingError:
+            log.error('Parsing failed: {0}'.format(url))
+            raise
 
     @staticmethod
     def get_forum_topics(forum_id: int, tab: Text, requests: RequestsSession) -> Set[BaibakoTopic]:
         url = '{0}/serial.php?id={1}&tab={2}'.format(BASE_URL, forum_id, tab)
         response = requests.get(url)
         response.raise_for_status()
-        return BaibakoParser.parse_topics(response.text)
+        try:
+            return BaibakoParser.parse_topics(response.text)
+        except ParsingError:
+            log.error('Parsing failed: {0}'.format(url))
+            raise
 
     @staticmethod
     def get_info_hash(requests: RequestsSession, topic_id: int) -> Text:
