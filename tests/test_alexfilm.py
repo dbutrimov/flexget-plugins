@@ -5,8 +5,7 @@ import unittest
 import requests
 import yaml
 
-from .context import alexfilm, ContentType
-
+from . import alexfilm, ContentType
 
 class TestAlexFilm(unittest.TestCase):
     def setUp(self):

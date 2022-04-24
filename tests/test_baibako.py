@@ -5,7 +5,7 @@ import unittest
 import requests
 import yaml
 
-from .context import baibako
+from . import baibako
 
 
 class TestBaibako(unittest.TestCase):
@@ -49,7 +49,7 @@ class TestBaibako(unittest.TestCase):
 
     def test_download_torrent(self):
         info_hash = baibako.Baibako.get_info_hash(self._requests, 36068)
-        print("hash: {0}".format(info_hash))
+        self.assertEqual(len(info_hash), 40, "The hash has invalid length: {0}".format(info_hash))
 
 
 if __name__ == '__main__':

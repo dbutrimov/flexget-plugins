@@ -4,7 +4,7 @@ import requests
 import unittest
 import yaml
 
-from .context import lostfilm, ContentType
+from . import lostfilm, ContentType
 
 
 class TestLostFilm(unittest.TestCase):

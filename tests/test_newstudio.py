@@ -7,7 +7,7 @@ import requests
 import urllib3
 import yaml
 
-from .context import newstudio, ContentType
+from . import newstudio, ContentType
 
 
 class TestNewStudio(unittest.TestCase):
