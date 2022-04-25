@@ -2,3 +2,5 @@ requests
 PyYAML
 flexget
 bencode.py
+cf_clearance
+pysocks

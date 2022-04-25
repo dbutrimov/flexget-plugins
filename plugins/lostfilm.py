@@ -9,6 +9,7 @@ from typing import Optional, Text, List, Dict, Any, Set
 from urllib.parse import urljoin
 
 import bs4
+from cf_clearance import sync_stealth, sync_cf_retry
 from flexget import options
 from flexget import plugin
 from flexget.db_schema import versioned_base
@@ -18,6 +19,7 @@ from flexget.manager import Session, Manager
 from flexget.plugin import PluginError
 from flexget.task import Task
 from flexget.terminal import console
+from playwright.sync_api import sync_playwright
 from requests import Session as RequestsSession, Response, PreparedRequest
 from requests.auth import AuthBase
 from sqlalchemy import Column, Unicode, Integer, DateTime, UniqueConstraint, ForeignKey, func
@@ -32,7 +34,6 @@ log = logging.getLogger(PLUGIN_NAME)
 Base = versioned_base(PLUGIN_NAME, SCHEMA_VER)
 
 BASE_URL = 'https://www.lostfilm.tv'
-API_URL = BASE_URL + '/ajaxik.php'
 COOKIES_DOMAIN = '.lostfilm.tv'
 
 HOST_REGEXP = re.compile(r'^https?://(?:www\.)?(?:.+\.)?lostfilm\.tv', flags=re.IGNORECASE)
@@ -42,10 +43,10 @@ def validate_host(url: Text) -> bool:
     return HOST_REGEXP.match(url) is not None
 
 
-class LostFilmApi(object):
+class LostFilmAjaxik(object):
     @staticmethod
-    def post(requests: RequestsSession, payload: Dict) -> Response:
-        return requests.post(API_URL, data=payload)
+    def post(requests: RequestsSession, payload: Dict, headers: Dict = None) -> Response:
+        return requests.post(BASE_URL + '/ajaxik.php', data=payload, headers=headers)
 
 
 # region LostFilmAuthPlugin
@@ -69,13 +70,49 @@ class LostFilmAuth(AuthBase):
     and cookies will be just set
     """
 
+    @staticmethod
+    def cf_challenge(requests: RequestsSession, url: Text) -> None:
+        cf_title = '<title>Please Wait... | Cloudflare</title>'
+
+        response = requests.get(url)
+        if cf_title not in response.text:
+            return
+
+        # get cf_clearance
+        with sync_playwright() as pw:
+            browser = pw.firefox.launch(headless=False)
+            page = browser.new_page()
+            sync_stealth(page, pure=True)
+            page.goto(url)
+
+            res = sync_cf_retry(page)
+            if res:
+                user_agent = page.evaluate('() => {return navigator.userAgent}')
+                requests.headers.update({'User-Agent': user_agent})
+
+                cookies = page.context.cookies()
+                for cookie in cookies:
+                    if cookie.get('name') == 'cf_clearance':
+                        cf_clearance = cookie.get('value')
+                        requests.cookies.set('cf_clearance', cf_clearance)
+                        break
+
+            browser.close()
+
+        response = requests.get(url)
+        if cf_title in response.text:
+            raise PluginError("cf challenge fail")
+
     def try_authenticate(self, payload: Dict) -> Dict:
         for _ in range(5):
             with RequestsSession() as session:
-                # session.headers['User-Agent'] = 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_12_1) ' \
-                #                                 'AppleWebKit/537.36 (KHTML, like Gecko) Chrome/54.0.2840.98 Safari/537.36'
+                if self.__user_agent:
+                    session.headers.update({'User-Agent': self.__user_agent})
+                if self.__cf_clearance:
+                    session.cookies.set('cf_clearance', self.__cf_clearance)
 
-                response = LostFilmApi.post(session, payload)
+                headers = {'Referer': BASE_URL + '/login'}
+                response = LostFilmAjaxik.post(session, payload, headers=headers)
                 response.raise_for_status()
 
                 response_json = response.json()
@@ -98,6 +135,12 @@ class LostFilmAuth(AuthBase):
         raise PluginError('Unable to obtain cookies from LostFilm. Looks like invalid username or password.')
 
     def __init__(self, username: Text, password: Text, cookies: Dict = None, session: OrmSession = None) -> None:
+        with RequestsSession() as requests:
+            self.cf_challenge(requests, BASE_URL)
+            self.__user_agent = requests.headers.get('User-Agent')
+            self.__cf_clearance = requests.cookies.get('cf_clearance')
+            requests.close()
+
         if cookies is None:
             log.debug('LostFilm cookie not found. Requesting new one.')
 
@@ -127,9 +170,15 @@ class LostFilmAuth(AuthBase):
             self.__cookies = cookies
 
     def __call__(self, request: PreparedRequest) -> PreparedRequest:
-        # request.prepare_cookies(self.__cookies)
         if validate_host(request.url):
-            request.headers['Cookie'] = '; '.join('{0}={1}'.format(key, val) for key, val in self.__cookies.items())
+            if self.__user_agent:
+                request.headers.update({'User-Agent': self.__user_agent})
+
+            cookie = '; '.join('{0}={1}'.format(key, val) for key, val in self.__cookies.items())
+            if self.__cf_clearance:
+                cookie = cookie + '; cf_clearance=' + self.__cf_clearance
+
+            request.headers.update({'Cookie': cookie})
         return request
 
 
@@ -628,8 +677,10 @@ class LostFilm(object):
                 't': 0  # all shows
             }
 
+            headers = {'Referer': BASE_URL + '/series/?type=search&s=2&t=0'}
+
             count = 0
-            response = LostFilmApi.post(requests, payload)
+            response = LostFilmAjaxik.post(requests, payload, headers=headers)
             response.raise_for_status()
             parsed_shows = LostFilmParser.parse_shows_json(response.text)
             if parsed_shows:
