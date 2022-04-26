@@ -9,7 +9,6 @@ from typing import Optional, Text, List, Dict, Any, Set
 from urllib.parse import urljoin
 
 import bs4
-from cf_clearance import sync_stealth, sync_cf_retry
 from flexget import options
 from flexget import plugin
 from flexget.db_schema import versioned_base
@@ -19,7 +18,6 @@ from flexget.manager import Session, Manager
 from flexget.plugin import PluginError
 from flexget.task import Task
 from flexget.terminal import console
-from playwright.sync_api import sync_playwright
 from requests import Session as RequestsSession, Response, PreparedRequest
 from requests.auth import AuthBase
 from sqlalchemy import Column, Unicode, Integer, DateTime, UniqueConstraint, ForeignKey, func
@@ -49,6 +47,38 @@ class LostFilmAjaxik(object):
         return requests.post(BASE_URL + '/ajaxik.php', data=payload, headers=headers)
 
 
+class FlareSolverr:
+    USER_AGENT = 'Mozilla/5.0 (X11; Linux x86_64; rv:94.0) Gecko/20100101 Firefox/94.0'
+
+    def __init__(self, endpoint):
+        self._endpoint = endpoint
+
+    def challenge(self, url: Text) -> (Text, Text):
+        headers = {
+            'User-Agent': self.USER_AGENT,
+            'Content-Type': 'application/json'
+        }
+
+        payload = json.dumps({
+            'cmd': 'request.get',
+            'url': url,
+            'returnOnlyCookies': True
+        })
+
+        with RequestsSession() as session:
+            response = session.post(self._endpoint, data=payload, headers=headers)
+            data = response.json()
+            cookies = data['solution']['cookies']
+            for cookie in cookies:
+                if cookie['name'] != 'cf_clearance':
+                    continue
+
+                cf_clearance = cookie['value']
+                return cf_clearance, self.USER_AGENT
+
+        return None
+
+
 # region LostFilmAuthPlugin
 class LostFilmAccount(Base):
     __tablename__ = 'lostfilm_accounts'
@@ -69,39 +99,6 @@ class LostFilmAuth(AuthBase):
     if you pass cookies (CookieJar) to constructor then authentication will be bypassed
     and cookies will be just set
     """
-
-    @staticmethod
-    def cf_challenge(requests: RequestsSession, url: Text) -> None:
-        cf_title = '<title>Please Wait... | Cloudflare</title>'
-
-        response = requests.get(url)
-        if cf_title not in response.text:
-            return
-
-        # get cf_clearance
-        with sync_playwright() as pw:
-            browser = pw.firefox.launch(headless=False)
-            page = browser.new_page()
-            sync_stealth(page, pure=True)
-            page.goto(url)
-
-            res = sync_cf_retry(page)
-            if res:
-                user_agent = page.evaluate('() => {return navigator.userAgent}')
-                requests.headers.update({'User-Agent': user_agent})
-
-                cookies = page.context.cookies()
-                for cookie in cookies:
-                    if cookie.get('name') == 'cf_clearance':
-                        cf_clearance = cookie.get('value')
-                        requests.cookies.set('cf_clearance', cf_clearance)
-                        break
-
-            browser.close()
-
-        response = requests.get(url)
-        if cf_title in response.text:
-            raise PluginError("cf challenge fail")
 
     def try_authenticate(self, payload: Dict) -> Dict:
         for _ in range(5):
@@ -134,12 +131,13 @@ class LostFilmAuth(AuthBase):
 
         raise PluginError('Unable to obtain cookies from LostFilm. Looks like invalid username or password.')
 
-    def __init__(self, username: Text, password: Text, cookies: Dict = None, session: OrmSession = None) -> None:
-        with RequestsSession() as requests:
-            self.cf_challenge(requests, BASE_URL)
-            self.__user_agent = requests.headers.get('User-Agent')
-            self.__cf_clearance = requests.cookies.get('cf_clearance')
-            requests.close()
+    def __init__(self, username: Text, password: Text, cookies: Dict = None,
+                 flaresolverr: FlareSolverr = None,
+                 session: OrmSession = None) -> None:
+        if flaresolverr:
+            cf_clearance, user_agent = flaresolverr.challenge(BASE_URL)
+            self.__cf_clearance = cf_clearance
+            self.__user_agent = user_agent
 
         if cookies is None:
             log.debug('LostFilm cookie not found. Requesting new one.')
@@ -188,13 +186,15 @@ class LostFilmAuthPlugin(object):
     lostfilm_auth:
       username: 'username_here'
       password: 'password_here'
+      flaresolverr: 'flaresolverr_address'
     """
 
     schema = {
         'type': 'object',
         'properties': {
             'username': {'type': 'string'},
-            'password': {'type': 'string'}
+            'password': {'type': 'string'},
+            'flaresolverr': {'type': 'string'}
         },
         'additionalProperties': False
     }
@@ -220,10 +220,15 @@ class LostFilmAuthPlugin(object):
         if not password or len(password) <= 0:
             raise PluginError('Password are not configured.')
 
+        flaresolverr_endpoint = config.get('flaresolverr')
+        if not flaresolverr_endpoint or len(flaresolverr_endpoint) <= 0:
+            raise PluginError('FlareSolverr are not configured.')
+
         with Session() as session:
             cookies = self.try_find_cookie(session, username)
             if username not in self.auth_cache:
-                auth_handler = LostFilmAuth(username, password, cookies, session)
+                flaresolverr = FlareSolverr(flaresolverr_endpoint)
+                auth_handler = LostFilmAuth(username, password, cookies, flaresolverr, session)
                 self.auth_cache[username] = auth_handler
             else:
                 auth_handler = self.auth_cache[username]
