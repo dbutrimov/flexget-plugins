@@ -47,13 +47,19 @@ class LostFilmAjaxik(object):
         return requests.post(BASE_URL + '/ajaxik.php', data=payload, headers=headers)
 
 
+class FlareSolverrChallenge:
+    def __init__(self, cf_clearance: Text, user_agent: Text):
+        self.cf_clearance = cf_clearance
+        self.user_agent = user_agent
+
+
 class FlareSolverr:
     USER_AGENT = 'Mozilla/5.0 (X11; Linux x86_64; rv:94.0) Gecko/20100101 Firefox/94.0'
 
     def __init__(self, endpoint):
         self._endpoint = endpoint
 
-    def challenge(self, url: Text) -> (Text, Text):
+    def challenge(self, url: Text) -> Optional[FlareSolverrChallenge]:
         headers = {
             'User-Agent': self.USER_AGENT,
             'Content-Type': 'application/json'
@@ -74,7 +80,7 @@ class FlareSolverr:
                     continue
 
                 cf_clearance = cookie['value']
-                return cf_clearance, self.USER_AGENT
+                return FlareSolverrChallenge(cf_clearance, self.USER_AGENT)
 
         return None
 
@@ -103,10 +109,9 @@ class LostFilmAuth(AuthBase):
     def try_authenticate(self, payload: Dict) -> Dict:
         for _ in range(5):
             with RequestsSession() as session:
-                if self.__user_agent:
-                    session.headers.update({'User-Agent': self.__user_agent})
-                if self.__cf_clearance:
-                    session.cookies.set('cf_clearance', self.__cf_clearance)
+                if self.__fs_challenge:
+                    session.headers.update({'User-Agent': self.__fs_challenge.user_agent})
+                    session.cookies.set('cf_clearance', self.__fs_challenge.cf_clearance)
 
                 headers = {'Referer': BASE_URL + '/login'}
                 response = LostFilmAjaxik.post(session, payload, headers=headers)
@@ -134,13 +139,7 @@ class LostFilmAuth(AuthBase):
     def __init__(self, username: Text, password: Text, cookies: Dict = None,
                  flaresolverr: FlareSolverr = None,
                  session: OrmSession = None) -> None:
-        if flaresolverr:
-            cf_clearance, user_agent = flaresolverr.challenge(BASE_URL)
-            self.__cf_clearance = cf_clearance
-            self.__user_agent = user_agent
-        else:
-            self.__cf_clearance = None
-            self.__user_agent = None
+        self.__fs_challenge = flaresolverr.challenge(BASE_URL) if flaresolverr else None
 
         if cookies is None:
             log.debug('LostFilm cookie not found. Requesting new one.')
@@ -172,12 +171,11 @@ class LostFilmAuth(AuthBase):
 
     def __call__(self, request: PreparedRequest) -> PreparedRequest:
         if validate_host(request.url):
-            if self.__user_agent:
-                request.headers.update({'User-Agent': self.__user_agent})
-
             cookie = '; '.join('{0}={1}'.format(key, val) for key, val in self.__cookies.items())
-            if self.__cf_clearance:
-                cookie = cookie + '; cf_clearance=' + self.__cf_clearance
+
+            if self.__fs_challenge:
+                request.headers.update({'User-Agent': self.__fs_challenge.user_agent})
+                cookie = cookie + '; cf_clearance=' + self.__fs_challenge.cf_clearance
 
             request.headers.update({'Cookie': cookie})
         return request
