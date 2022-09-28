@@ -138,6 +138,9 @@ class LostFilmAuth(AuthBase):
             cf_clearance, user_agent = flaresolverr.challenge(BASE_URL)
             self.__cf_clearance = cf_clearance
             self.__user_agent = user_agent
+        else:
+            self.__cf_clearance = None
+            self.__user_agent = None
 
         if cookies is None:
             log.debug('LostFilm cookie not found. Requesting new one.')
@@ -220,14 +223,15 @@ class LostFilmAuthPlugin(object):
         if not password or len(password) <= 0:
             raise PluginError('Password are not configured.')
 
-        flaresolverr_endpoint = config.get('flaresolverr')
-        if not flaresolverr_endpoint or len(flaresolverr_endpoint) <= 0:
-            raise PluginError('FlareSolverr are not configured.')
-
         with Session() as session:
             cookies = self.try_find_cookie(session, username)
             if username not in self.auth_cache:
-                flaresolverr = FlareSolverr(flaresolverr_endpoint)
+                flaresolverr_endpoint = config.get('flaresolverr')
+                if flaresolverr_endpoint and len(flaresolverr_endpoint) > 0:
+                    flaresolverr = FlareSolverr(flaresolverr_endpoint)
+                else:
+                    flaresolverr = None
+
                 auth_handler = LostFilmAuth(username, password, cookies, flaresolverr, session)
                 self.auth_cache[username] = auth_handler
             else:
