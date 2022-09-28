@@ -16,8 +16,11 @@ class TestLostFilm(unittest.TestCase):
             self._username = config['username']
             self._password = config['password']
 
-            flaresolverr_endpoint = config['flaresolverr']
-            flaresolverr = lostfilm.FlareSolverr(flaresolverr_endpoint)
+            flaresolverr_endpoint = config.get('flaresolverr')
+            if flaresolverr_endpoint and len(flaresolverr_endpoint) > 0:
+                flaresolverr = lostfilm.FlareSolverr(flaresolverr_endpoint)
+            else:
+                flaresolverr = None
 
             self._auth = lostfilm.LostFilmAuth(self._username, self._password, flaresolverr=flaresolverr)
             self._requests = requests.Session()
