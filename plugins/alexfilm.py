@@ -1,6 +1,5 @@
 # -*- coding: utf-8 -*-
 
-import json
 import logging
 import re
 from datetime import datetime, timedelta
@@ -8,8 +7,6 @@ from time import sleep
 from typing import Text, Dict, Optional, List, Set
 from urllib.parse import urljoin
 
-import requests
-import sqlalchemy.orm
 from bs4 import BeautifulSoup
 from flexget import plugin
 from flexget.db_schema import versioned_base
@@ -18,9 +15,12 @@ from flexget.event import event
 from flexget.manager import Session
 from flexget.plugin import PluginError
 from flexget.task import Task
+from requests import Session as RequestsSession, PreparedRequest, RequestException
 from requests.auth import AuthBase
 from sqlalchemy import Column, Unicode, Integer, DateTime, UniqueConstraint, ForeignKey, func
-from sqlalchemy.types import TypeDecorator, VARCHAR
+from sqlalchemy.orm import Session as OrmSession
+
+from .utils import JSONEncodedDict
 
 PLUGIN_NAME = 'alexfilm'
 SCHEMA_VER = 0
@@ -34,36 +34,11 @@ COOKIES_DOMAIN = '.alexfilm.org'
 HOST_REGEXP = re.compile(r'^https?://(?:www\.)?(?:.+\.)?alexfilm\.org', flags=re.IGNORECASE)
 
 
-def process_url(url: Text, base_url: Text) -> Text:
-    return urljoin(base_url, url)
-
-
 def validate_host(url: Text) -> bool:
     return HOST_REGEXP.match(url) is not None
 
 
 # region AlexFilmAuthPlugin
-class JSONEncodedDict(TypeDecorator):
-    """
-    Represents an immutable structure as a json-encoded string.
-
-    Usage:
-        JSONEncodedDict(255)
-    """
-
-    impl = VARCHAR
-
-    def process_bind_param(self, value, dialect):
-        if value is not None:
-            value = json.dumps(value)
-        return value
-
-    def process_result_value(self, value, dialect):
-        if value is not None:
-            value = json.loads(value)
-        return value
-
-
 class AlexFilmAccount(Base):
     __tablename__ = 'alexfilm_accounts'
     id = Column(Integer, primary_key=True, autoincrement=True, nullable=False)
@@ -86,22 +61,19 @@ class AlexFilmAuth(AuthBase):
 
     def try_authenticate(self, payload: Dict) -> Dict:
         for _ in range(5):
-            session = requests.Session()
-            try:
+            with RequestsSession() as session:
                 response = session.post('{0}/login.php'.format(BASE_URL), data=payload)
                 response.raise_for_status()
 
                 cookies = session.cookies.get_dict(domain=COOKIES_DOMAIN)
                 if cookies and len(cookies) > 0:
                     return cookies
-            finally:
-                session.close()
+
             sleep(3)
 
         raise PluginError('Unable to obtain cookies from AlexFilm. Looks like invalid username or password.')
 
-    def __init__(self, username: Text, password: Text,
-                 cookies: Dict = None, db_session: sqlalchemy.orm.Session = None) -> None:
+    def __init__(self, username: Text, password: Text, cookies: Dict = None, session: OrmSession = None) -> None:
         if cookies is None:
             log.debug('AlexFilm cookie not found. Requesting new one.')
 
@@ -113,21 +85,21 @@ class AlexFilmAuth(AuthBase):
             }
 
             self.__cookies = self.try_authenticate(payload_)
-            if db_session:
-                db_session.add(
+            if session:
+                session.add(
                     AlexFilmAccount(
                         username=username,
                         cookies=self.__cookies,
                         expiry_time=datetime.now() + timedelta(days=1)))
-                db_session.commit()
+                session.commit()
             # else:
             #     raise ValueError(
-            #         'db_session can not be None if cookies is None')
+            #         'session can not be None if cookies is None')
         else:
             log.debug('Using previously saved cookie.')
             self.__cookies = cookies
 
-    def __call__(self, request: requests.PreparedRequest) -> requests.PreparedRequest:
+    def __call__(self, request: PreparedRequest) -> PreparedRequest:
         # request.prepare_cookies(self.__cookies)
         if validate_host(request.url):
             request.headers['Cookie'] = '; '.join('{0}={1}'.format(key, val) for key, val in self.__cookies.items())
@@ -153,12 +125,12 @@ class AlexFilmAuthPlugin(object):
 
     auth_cache = {}
 
-    def try_find_cookie(self, db_session: sqlalchemy.orm.Session, username: Text) -> Optional[Dict]:
-        account = db_session.query(AlexFilmAccount).filter(AlexFilmAccount.username == username).first()
+    def try_find_cookie(self, session: OrmSession, username: Text) -> Optional[Dict]:
+        account = session.query(AlexFilmAccount).filter(AlexFilmAccount.username == username).first()
         if account:
             if account.expiry_time < datetime.now():
-                db_session.delete(account)
-                db_session.commit()
+                session.delete(account)
+                session.commit()
                 return None
             return account.cookies
         else:
@@ -172,15 +144,15 @@ class AlexFilmAuthPlugin(object):
         if not password or len(password) <= 0:
             raise PluginError('Password are not configured.')
 
-        db_session = Session()
-        cookies = self.try_find_cookie(db_session, username)
-        if username not in self.auth_cache:
-            auth_handler = AlexFilmAuth(username, password, cookies, db_session)
-            self.auth_cache[username] = auth_handler
-        else:
-            auth_handler = self.auth_cache[username]
+        with Session() as session:
+            cookies = self.try_find_cookie(session, username)
+            if username not in self.auth_cache:
+                auth_handler = AlexFilmAuth(username, password, cookies, session)
+                self.auth_cache[username] = auth_handler
+            else:
+                auth_handler = self.auth_cache[username]
 
-        return auth_handler
+            return auth_handler
 
     @plugin.priority(plugin.PRIORITY_DEFAULT)
     def on_task_start(self, task: Task, config: Dict) -> None:
@@ -309,47 +281,47 @@ class AlexFilmParser(object):
 
 class AlexFilmDatabase(object):
     @staticmethod
-    def shows_timestamp(db_session: sqlalchemy.orm.Session) -> datetime:
-        return db_session.query(func.min(DbAlexFilmShow.updated_at)).scalar() or None
+    def shows_timestamp(session: OrmSession) -> datetime:
+        return session.query(func.min(DbAlexFilmShow.updated_at)).scalar() or None
 
     @staticmethod
-    def shows_count(db_session: sqlalchemy.orm.Session) -> int:
-        return db_session.query(DbAlexFilmShow).count()
+    def shows_count(session: OrmSession) -> int:
+        return session.query(DbAlexFilmShow).count()
 
     @staticmethod
-    def clear_shows(db_session: sqlalchemy.orm.Session) -> None:
-        db_session.query(DbAlexFilmShowAlternateName).delete()
-        db_session.query(DbAlexFilmShow).delete()
-        db_session.commit()
+    def clear_shows(session: OrmSession) -> None:
+        session.query(DbAlexFilmShowAlternateName).delete()
+        session.query(DbAlexFilmShow).delete()
+        session.commit()
 
     @staticmethod
-    def update_shows(shows: Set[AlexFilmShow], db_session: sqlalchemy.orm.Session) -> None:
+    def update_shows(shows: Set[AlexFilmShow], session: OrmSession) -> None:
         # Clear database
-        AlexFilmDatabase.clear_shows(db_session)
+        AlexFilmDatabase.clear_shows(session)
 
         # Insert new rows
         if shows and len(shows) > 0:
             now = datetime.now()
             for show in shows:
                 db_show = DbAlexFilmShow(id_=show.show_id, title=show.titles[0], url=show.url, updated_at=now)
-                db_session.add(db_show)
+                session.add(db_show)
 
                 for index, item in enumerate(show.titles[1:], start=1):
                     alternate_name = DbAlexFilmShowAlternateName(show_id=show.show_id, title=item)
-                    db_session.add(alternate_name)
+                    session.add(alternate_name)
 
-            db_session.commit()
+            session.commit()
 
     @staticmethod
-    def get_shows(db_session: sqlalchemy.orm.Session) -> Set[AlexFilmShow]:
+    def get_shows(session: OrmSession) -> Set[AlexFilmShow]:
         shows = set()
 
-        db_shows = db_session.query(DbAlexFilmShow).all()
+        db_shows = session.query(DbAlexFilmShow).all()
         for db_show in db_shows:
             titles = list()
             titles.append(db_show.title)
 
-            db_alternate_names = db_session.query(DbAlexFilmShowAlternateName).filter(
+            db_alternate_names = session.query(DbAlexFilmShowAlternateName).filter(
                 DbAlexFilmShowAlternateName.show_id == db_show.id).all()
             if db_alternate_names and len(db_alternate_names) > 0:
                 for db_alternate_name in db_alternate_names:
@@ -361,13 +333,13 @@ class AlexFilmDatabase(object):
         return shows
 
     @staticmethod
-    def get_show_by_id(show_id: int, db_session: sqlalchemy.orm.Session) -> Optional[AlexFilmShow]:
-        db_show = db_session.query(DbAlexFilmShow).filter(DbAlexFilmShow.id == show_id).first()
+    def get_show_by_id(show_id: int, session: OrmSession) -> Optional[AlexFilmShow]:
+        db_show = session.query(DbAlexFilmShow).filter(DbAlexFilmShow.id == show_id).first()
         if db_show:
             titles = list()
             titles.append(db_show.title)
 
-            db_alternate_names = db_session.query(DbAlexFilmShowAlternateName).filter(
+            db_alternate_names = session.query(DbAlexFilmShowAlternateName).filter(
                 DbAlexFilmShowAlternateName.show_id == db_show.id).all()
             if db_alternate_names and len(db_alternate_names) > 0:
                 for db_alternate_name in db_alternate_names:
@@ -379,15 +351,15 @@ class AlexFilmDatabase(object):
         return None
 
     @staticmethod
-    def find_show_by_title(title: Text, db_session: sqlalchemy.orm.Session) -> Optional[AlexFilmShow]:
-        db_show = db_session.query(DbAlexFilmShow).filter(DbAlexFilmShow.title == title).first()
+    def find_show_by_title(title: Text, session: OrmSession) -> Optional[AlexFilmShow]:
+        db_show = session.query(DbAlexFilmShow).filter(DbAlexFilmShow.title == title).first()
         if db_show:
-            return AlexFilmDatabase.get_show_by_id(db_show.id, db_session)
+            return AlexFilmDatabase.get_show_by_id(db_show.id, session)
 
-        db_alternate_name = db_session.query(DbAlexFilmShowAlternateName).filter(
+        db_alternate_name = session.query(DbAlexFilmShowAlternateName).filter(
             DbAlexFilmShowAlternateName.title == title).first()
         if db_alternate_name:
-            return AlexFilmDatabase.get_show_by_id(db_alternate_name.show_id, db_session)
+            return AlexFilmDatabase.get_show_by_id(db_alternate_name.show_id, session)
 
         return None
 
@@ -406,21 +378,21 @@ class AlexFilm(object):
         return '{0}/viewtopic.php?t={1}'.format(BASE_URL, topic_id)
 
     @staticmethod
-    def get_download_id(requests_: requests.Session, topic_id: int) -> int:
+    def get_download_id(requests: RequestsSession, topic_id: int) -> int:
         topic_url = AlexFilm.get_topic_url(topic_id)
-        topic_response = requests_.get(topic_url)
+        topic_response = requests.get(topic_url)
         topic_response.raise_for_status()
         return AlexFilmParser.parse_download_id(topic_response.text)
 
     @staticmethod
-    def get_download_url(requests_: requests.Session, topic_id: int) -> str:
-        download_id = AlexFilm.get_download_id(requests_, topic_id)
+    def get_download_url(requests: RequestsSession, topic_id: int) -> str:
+        download_id = AlexFilm.get_download_id(requests, topic_id)
         return '{0}/dl.php?id={1}'.format(BASE_URL, download_id)
 
     @staticmethod
-    def get_magnet(requests_: requests.Session, topic_id: int) -> Text:
+    def get_magnet(requests: RequestsSession, topic_id: int) -> Text:
         topic_url = AlexFilm.get_topic_url(topic_id)
-        topic_response = requests_.get(topic_url)
+        topic_response = requests.get(topic_url)
         topic_response.raise_for_status()
         return AlexFilmParser.parse_magnet(topic_response.text)
 
@@ -442,7 +414,7 @@ class AlexFilmPlugin(object):
         try:
             topic_response = task.requests.get(topic_url)
             topic_response.raise_for_status()
-        except requests.RequestException as e:
+        except RequestException as e:
             reject_reason = "Error while fetching page: {0}".format(e)
             log.error(reject_reason)
             entry.reject(reject_reason)
@@ -459,7 +431,7 @@ class AlexFilmPlugin(object):
             entry.reject(reject_reason)
             return False
 
-        download_url = process_url(download_url, topic_response.url)
+        download_url = urljoin(topic_response.url, download_url)
 
         entry['url'] = download_url
         return True
@@ -468,7 +440,7 @@ class AlexFilmPlugin(object):
         try:
             serials_response = task.requests.get(BASE_URL)
             serials_response.raise_for_status()
-        except requests.RequestException as e:
+        except RequestException as e:
             log.error("Error while fetching page: {0}".format(e))
             sleep(3)
             return None
@@ -478,13 +450,13 @@ class AlexFilmPlugin(object):
         shows = AlexFilmParser.parse_shows_page(serials_html)
         if shows:
             for show in shows:
-                show.url = process_url(show.url, serials_response.url)
+                show.url = urljoin(serials_response.url, show.url)
 
         return shows
 
-    def search_show(self, task: Task, title: Text, db_session: sqlalchemy.orm.Session) -> Optional[AlexFilmShow]:
+    def search_show(self, task: Task, title: Text, session: OrmSession) -> Optional[AlexFilmShow]:
         update_required = True
-        db_timestamp = AlexFilmDatabase.shows_timestamp(db_session)
+        db_timestamp = AlexFilmDatabase.shows_timestamp(session)
         if db_timestamp:
             difference = datetime.now() - db_timestamp
             update_required = difference.days > 3
@@ -493,98 +465,97 @@ class AlexFilmPlugin(object):
             shows = self.get_shows(task)
             if shows:
                 log.debug('{0} show(s) received'.format(len(shows)))
-                AlexFilmDatabase.update_shows(shows, db_session)
+                AlexFilmDatabase.update_shows(shows, session)
 
-        show = AlexFilmDatabase.find_show_by_title(title, db_session)
+        show = AlexFilmDatabase.find_show_by_title(title, session)
         return show
 
     def search(self, task: Task, entry: Entry, config: Dict = None) -> Set[Entry]:
-        db_session = Session()
+        with Session() as session:
+            topic_name_regexp = re.compile(
+                r"^([^/]*?)\s*/\s*([^/]*?)\s/\s*[Сс]езон\s*(\d+)\s*/\s*[Сс]ерии\s*(\d+)-(\d+).*,\s*(.*)\s*\].*$",
+                flags=re.IGNORECASE)
+            panel_class_regexp = re.compile(r'panel.*', flags=re.IGNORECASE)
+            url_regexp = re.compile(r'viewtopic\.php\?t=(\d+)', flags=re.IGNORECASE)
 
-        topic_name_regexp = re.compile(
-            r"^([^/]*?)\s*/\s*([^/]*?)\s/\s*[Сс]езон\s*(\d+)\s*/\s*[Сс]ерии\s*(\d+)-(\d+).*,\s*(.*)\s*\].*$",
-            flags=re.IGNORECASE)
-        panel_class_regexp = re.compile(r'panel.*', flags=re.IGNORECASE)
-        url_regexp = re.compile(r'viewtopic\.php\?t=(\d+)', flags=re.IGNORECASE)
+            # regexp: '^([^/]*?)\s*/\s*([^/]*?)\s/\s*[Сс]езон\s*(\d+)\s*/\s*[Сс]ерии\s*(\d+)-(\d+).*,\s*(.*)\s*\].*$'
+            # format: '\2 / \1 / s\3e\4-e\5 / \6'
 
-        # regexp: '^([^/]*?)\s*/\s*([^/]*?)\s/\s*[Сс]езон\s*(\d+)\s*/\s*[Сс]ерии\s*(\d+)-(\d+).*,\s*(.*)\s*\].*$'
-        # format: '\2 / \1 / s\3e\4-e\5 / \6'
+            entries = set()
+            for search_string in entry.get('search_strings', [entry['title']]):
+                search_match = None
+                for search_string_regexp in SEARCH_STRING_REGEXPS:
+                    search_match = search_string_regexp.search(search_string)
+                    if search_match:
+                        break
 
-        entries = set()
-        for search_string in entry.get('search_strings', [entry['title']]):
-            search_match = None
-            for search_string_regexp in SEARCH_STRING_REGEXPS:
-                search_match = search_string_regexp.search(search_string)
-                if search_match:
-                    break
+                if not search_match:
+                    log.warning("Invalid search string: {0}".format(search_string))
+                    continue
 
-            if not search_match:
-                log.warning("Invalid search string: {0}".format(search_string))
-                continue
+                search_title = search_match.group(1)
+                search_season = int(search_match.group(2))
+                search_episode = int(search_match.group(3))
 
-            search_title = search_match.group(1)
-            search_season = int(search_match.group(2))
-            search_episode = int(search_match.group(3))
+                log.debug("{0} s{1:02d}e{2:02d}".format(search_title, search_season, search_episode))
 
-            log.debug("{0} s{1:02d}e{2:02d}".format(search_title, search_season, search_episode))
+                show = self.search_show(task, search_title, session)
+                if not show:
+                    log.warning("Unknown show: {0}".format(search_title))
+                    continue
 
-            show = self.search_show(task, search_title, db_session)
-            if not show:
-                log.warning("Unknown show: {0}".format(search_title))
-                continue
-
-            try:
-                serial_response = task.requests.get(show.url)
-                serial_response.raise_for_status()
-            except requests.RequestException as e:
-                log.error("Error while fetching page: {0}".format(e))
+                try:
+                    serial_response = task.requests.get(show.url)
+                    serial_response.raise_for_status()
+                except RequestException as e:
+                    log.error("Error while fetching page: {0}".format(e))
+                    sleep(3)
+                    continue
+                serial_html = serial_response.text
                 sleep(3)
-                continue
-            serial_html = serial_response.text
-            sleep(3)
 
-            serial_tree = BeautifulSoup(serial_html, 'html.parser')
-            serial_table_node = serial_tree.find('section')
-            if not serial_table_node:
-                log.error('Error while parsing serial page: node <table class=`table.*`> are not found')
-                continue
-
-            panel_nodes = serial_table_node.find_all('div', class_=panel_class_regexp)
-            for panel_node in panel_nodes:
-                url_node = panel_node.find('a', href=url_regexp)
-                if not url_node:
+                serial_tree = BeautifulSoup(serial_html, 'html.parser')
+                serial_table_node = serial_tree.find('section')
+                if not serial_table_node:
+                    log.error('Error while parsing serial page: node <table class=`table.*`> are not found')
                     continue
 
-                topic_name = url_node.text
-                name_match = topic_name_regexp.match(topic_name)
-                if not name_match:
-                    continue
+                panel_nodes = serial_table_node.find_all('div', class_=panel_class_regexp)
+                for panel_node in panel_nodes:
+                    url_node = panel_node.find('a', href=url_regexp)
+                    if not url_node:
+                        continue
 
-                title = name_match.group(2)
-                alternative_title = name_match.group(1)
-                season = int(name_match.group(3))
-                first_episode = int(name_match.group(4))
-                last_episode = int(name_match.group(5))
-                quality = name_match.group(6)
+                    topic_name = url_node.text
+                    name_match = topic_name_regexp.match(topic_name)
+                    if not name_match:
+                        continue
 
-                if search_season != season or (search_episode < first_episode or search_episode > last_episode):
-                    continue
+                    title = name_match.group(2)
+                    alternative_title = name_match.group(1)
+                    season = int(name_match.group(3))
+                    first_episode = int(name_match.group(4))
+                    last_episode = int(name_match.group(5))
+                    quality = name_match.group(6)
 
-                episode_id = "s{0:02d}e{1:02d}-{2:02d}".format(season, first_episode, last_episode)
-                name = "{0} / {1} / {2} / {3}".format(title, alternative_title, episode_id, quality)
-                topic_url = url_node.get('href')
-                topic_url = process_url(topic_url, serial_response.url)
+                    if search_season != season or (search_episode < first_episode or search_episode > last_episode):
+                        continue
 
-                log.debug("{0} - {1}".format(name, topic_url))
+                    episode_id = "s{0:02d}e{1:02d}-{2:02d}".format(season, first_episode, last_episode)
+                    name = "{0} / {1} / {2} / {3}".format(title, alternative_title, episode_id, quality)
+                    topic_url = url_node.get('href')
+                    topic_url = urljoin(serial_response.url, topic_url)
 
-                entry = Entry()
-                entry['title'] = name
-                entry['url'] = topic_url
-                entry['series_id'] = episode_id
+                    log.debug("{0} - {1}".format(name, topic_url))
 
-                entries.add(entry)
+                    entry = Entry()
+                    entry['title'] = name
+                    entry['url'] = topic_url
+                    entry['series_id'] = episode_id
 
-        return entries
+                    entries.add(entry)
+
+            return entries
 
 
 # endregion

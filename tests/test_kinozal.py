@@ -5,7 +5,7 @@ import unittest
 import requests
 import yaml
 
-from .context import kinozal, ContentType
+from . import kinozal, ContentType
 
 
 class TestKinozal(unittest.TestCase):
@@ -30,17 +30,18 @@ class TestKinozal(unittest.TestCase):
             print(u"[{0}] {1} -> {2}".format(entry.id, entry.title, entry.url))
 
     def test_info_hash(self):
-        info_hash = kinozal.Kinozal.get_info_hash(self._requests, 1699578)
-        print("hash: {0}".format(info_hash))
+        info_hash = kinozal.Kinozal.get_info_hash(self._requests, 1791623)
+        self.assertEqual(len(info_hash), 40, "The hash has invalid length: {0}".format(info_hash))
 
     def test_download(self):
-        url = 'http://kinozal.tv/download.php?id={0}'.format(1699578)
+        url = 'http://kinozal.tv/download.php?id={0}'.format(1791623)
         response = self._requests.get(url)
         response.raise_for_status()
         ContentType.raise_not_torrent(response)
 
-        content_type = response.headers['Content-Type']
-        print(content_type)
+        content_type = response.headers['Content-Type'].lower()
+        self.assertEqual(content_type, "application/x-bittorrent",
+                         "The response has invalid content type: {0}".format(content_type))
 
 
 if __name__ == '__main__':

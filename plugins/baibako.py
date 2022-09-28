@@ -1,17 +1,13 @@
 # -*- coding: utf-8 -*-
 
 import hashlib
-import json
 import logging
 import re
 from datetime import datetime, timedelta
 from time import sleep
 from typing import Dict, Text, Optional, Set, List, Any
-from urllib.parse import urljoin
 
 import bencodepy
-import requests
-import sqlalchemy.orm
 from bs4 import BeautifulSoup
 from flexget import options
 from flexget import plugin
@@ -22,11 +18,12 @@ from flexget.manager import Session, Manager
 from flexget.plugin import PluginError
 from flexget.task import Task
 from flexget.terminal import console
+from requests import Session as RequestsSession, PreparedRequest
 from requests.auth import AuthBase
 from sqlalchemy import Column, Unicode, Integer, DateTime, func
-from sqlalchemy.types import TypeDecorator, VARCHAR
+from sqlalchemy.orm import Session as OrmSession
 
-from .utils import ContentType
+from .utils import ContentType, JSONEncodedDict
 
 PLUGIN_NAME = 'baibako'
 SCHEMA_VER = 0
@@ -34,14 +31,12 @@ SCHEMA_VER = 0
 log = logging.getLogger(PLUGIN_NAME)
 Base = versioned_base(PLUGIN_NAME, SCHEMA_VER)
 
-BASE_URL = 'https://baibako.tv'
+BASE_URL = 'http://baibako.tv'
 COOKIES_DOMAIN = 'baibako.tv'
 
 HOST_REGEXP = re.compile(r'^https?://(?:www\.)?(?:.+\.)?baibako\.tv', flags=re.IGNORECASE)
 
-
-def process_url(url: Text, base_url: Text) -> Text:
-    return urljoin(base_url, url)
+USER_AGENT = 'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/45.0.2454.85 Safari/537.36'
 
 
 def validate_host(url: Text) -> bool:
@@ -49,27 +44,6 @@ def validate_host(url: Text) -> bool:
 
 
 # region BaibakoAuthPlugin
-class JSONEncodedDict(TypeDecorator):
-    """
-    Represents an immutable structure as a json-encoded string.
-
-    Usage:
-        JSONEncodedDict(255)
-    """
-
-    impl = VARCHAR
-
-    def process_bind_param(self, value, dialect):
-        if value is not None:
-            value = json.dumps(value)
-        return value
-
-    def process_result_value(self, value, dialect):
-        if value is not None:
-            value = json.loads(value)
-        return value
-
-
 class BaibakoAccount(Base):
     __tablename__ = 'baibako_accounts'
     id = Column(Integer, primary_key=True, autoincrement=True, nullable=False)
@@ -92,44 +66,46 @@ class BaibakoAuth(AuthBase):
 
     def try_authenticate(self, payload: Dict) -> Dict:
         for _ in range(5):
-            session = requests.Session()
-            try:
+            with RequestsSession() as session:
+                session.headers.update({'User-Agent': USER_AGENT})
+
                 response = session.post('{0}/takelogin.php'.format(BASE_URL), data=payload)
                 response.raise_for_status()
 
                 cookies = session.cookies.get_dict(domain=COOKIES_DOMAIN)
                 if cookies and len(cookies) > 0 and 'uid' in cookies:
                     return cookies
-            finally:
-                session.close()
+
             sleep(3)
 
         raise PluginError('Unable to obtain cookies from Baibako. Looks like invalid username or password.')
 
-    def __init__(self, username: Text, password: Text,
-                 cookies: Dict = None, db_session: sqlalchemy.orm.Session = None) -> None:
+    def __init__(self, username: Text, password: Text, cookies: Dict = None, session: OrmSession = None) -> None:
         if cookies is None:
             log.debug('Baibako cookie not found. Requesting new one.')
             payload_ = {'username': username, 'password': password}
             self.__cookies = self.try_authenticate(payload_)
-            if db_session:
-                db_session.add(
+            if session:
+                session.add(
                     BaibakoAccount(
                         username=username,
                         cookies=self.__cookies,
                         expiry_time=datetime.now() + timedelta(days=1)))
-                db_session.commit()
+                session.commit()
             # else:
             #     raise ValueError(
-            #         'db_session can not be None if cookies is None')
+            #         'session can not be None if cookies is None')
         else:
             log.debug('Using previously saved cookie.')
             self.__cookies = cookies
 
-    def __call__(self, request: requests.PreparedRequest) -> requests.PreparedRequest:
+    def __call__(self, request: PreparedRequest) -> PreparedRequest:
         # request.prepare_cookies(self.__cookies)
         if validate_host(request.url):
-            request.headers['Cookie'] = '; '.join('{0}={1}'.format(key, val) for key, val in self.__cookies.items())
+            request.headers.update({
+                'User-Agent': USER_AGENT,
+                'Cookie': '; '.join('{0}={1}'.format(key, val) for key, val in self.__cookies.items())
+            })
         return request
 
 
@@ -152,12 +128,12 @@ class BaibakoAuthPlugin(object):
 
     auth_cache = {}
 
-    def try_find_cookie(self, db_session: sqlalchemy.orm.Session, username: Text) -> Optional[Dict]:
-        account = db_session.query(BaibakoAccount).filter(BaibakoAccount.username == username).first()
+    def try_find_cookie(self, session: OrmSession, username: Text) -> Optional[Dict]:
+        account = session.query(BaibakoAccount).filter(BaibakoAccount.username == username).first()
         if account:
             if account.expiry_time < datetime.now():
-                db_session.delete(account)
-                db_session.commit()
+                session.delete(account)
+                session.commit()
                 return None
             return account.cookies
         else:
@@ -171,15 +147,15 @@ class BaibakoAuthPlugin(object):
         if not password or len(password) <= 0:
             raise PluginError('Password are not configured.')
 
-        db_session = Session()
-        cookies = self.try_find_cookie(db_session, username)
-        if username not in self.auth_cache:
-            auth_handler = BaibakoAuth(username, password, cookies, db_session)
-            self.auth_cache[username] = auth_handler
-        else:
-            auth_handler = self.auth_cache[username]
+        with Session() as session:
+            cookies = self.try_find_cookie(session, username)
+            if username not in self.auth_cache:
+                auth_handler = BaibakoAuth(username, password, cookies, session)
+                self.auth_cache[username] = auth_handler
+            else:
+                auth_handler = self.auth_cache[username]
 
-        return auth_handler
+            return auth_handler
 
     @plugin.priority(plugin.PRIORITY_DEFAULT)
     def on_task_start(self, task: Task, config: Dict) -> None:
@@ -272,9 +248,9 @@ class BaibakoParser(object):
     @staticmethod
     def parse_forums(html: Text) -> Set[BaibakoForum]:
         soup = BeautifulSoup(html, 'html.parser')
-        table_node = soup.find('table', class_=TABLE_CLASS_REGEXP)
+        table_node = soup.find('div', class_="row serialsearch")
         if not table_node:
-            raise ParsingError('Node <table class=`table.*`> are not found')
+            raise ParsingError('Node <div class=`row serialsearch`> are not found')
 
         forums = set()
 
@@ -370,91 +346,91 @@ class DbBaibakoTopic(Base):
 
 class BaibakoDatabase(object):
     @staticmethod
-    def forums_timestamp(db_session: sqlalchemy.orm.Session) -> datetime:
-        return db_session.query(func.min(DbBaibakoForum.updated_at)).scalar() or None
+    def forums_timestamp(session: OrmSession) -> datetime:
+        return session.query(func.min(DbBaibakoForum.updated_at)).scalar() or None
 
     @staticmethod
-    def forums_count(db_session: sqlalchemy.orm.Session) -> int:
-        return db_session.query(DbBaibakoForum).count()
+    def forums_count(session: OrmSession) -> int:
+        return session.query(DbBaibakoForum).count()
 
     @staticmethod
-    def clear_forums(db_session: sqlalchemy.orm.Session) -> None:
-        db_session.query(DbBaibakoForum).delete()
-        db_session.commit()
+    def clear_forums(session: OrmSession) -> None:
+        session.query(DbBaibakoForum).delete()
+        session.commit()
 
     @staticmethod
-    def update_forums(forums: Set[BaibakoForum], db_session: sqlalchemy.orm.Session) -> None:
+    def update_forums(forums: Set[BaibakoForum], session: OrmSession) -> None:
         # Clear database
-        BaibakoDatabase.clear_forums(db_session)
+        BaibakoDatabase.clear_forums(session)
 
         # Insert new rows
         if forums and len(forums) > 0:
             now = datetime.now()
             for forum in forums:
                 db_forum = DbBaibakoForum(id_=forum.id, title=forum.title, updated_at=now)
-                db_session.add(db_forum)
+                session.add(db_forum)
 
-            db_session.commit()
+            session.commit()
 
     @staticmethod
-    def get_forums(db_session: sqlalchemy.orm.Session) -> Set[BaibakoForum]:
+    def get_forums(session: OrmSession) -> Set[BaibakoForum]:
         forums = set()
 
-        db_forums = db_session.query(DbBaibakoForum).all()
+        db_forums = session.query(DbBaibakoForum).all()
         for db_forum in db_forums:
             forums.add(BaibakoForum(db_forum.id, db_forum.title))
 
         return forums
 
     @staticmethod
-    def get_forum_by_id(forum_id: int, db_session: sqlalchemy.orm.Session) -> Optional[BaibakoForum]:
-        db_forum = db_session.query(DbBaibakoForum).filter(DbBaibakoForum.id == forum_id).first()
+    def get_forum_by_id(forum_id: int, session: OrmSession) -> Optional[BaibakoForum]:
+        db_forum = session.query(DbBaibakoForum).filter(DbBaibakoForum.id == forum_id).first()
         if db_forum:
             return BaibakoForum(db_forum.id, db_forum.title)
 
         return None
 
     @staticmethod
-    def find_forum_by_title(title: Text, db_session: sqlalchemy.orm.Session) -> Optional[BaibakoForum]:
-        db_forum = db_session.query(DbBaibakoForum).filter(DbBaibakoForum.title == title).first()
+    def find_forum_by_title(title: Text, session: OrmSession) -> Optional[BaibakoForum]:
+        db_forum = session.query(DbBaibakoForum).filter(DbBaibakoForum.title == title).first()
         if db_forum:
             return BaibakoForum(db_forum.id, db_forum.title)
 
         return None
 
     @staticmethod
-    def forum_topics_timestamp(forum_id: int, db_session: sqlalchemy.orm.Session) -> datetime:
-        return db_session.query(func.min(DbBaibakoTopic.updated_at)).filter(
+    def forum_topics_timestamp(forum_id: int, session: OrmSession) -> datetime:
+        return session.query(func.min(DbBaibakoTopic.updated_at)).filter(
             DbBaibakoTopic.forum_id == forum_id).scalar() or None
 
     @staticmethod
-    def forum_topics_count(forum_id: int, db_session: sqlalchemy.orm.Session) -> int:
-        return db_session.query(DbBaibakoTopic).filter(DbBaibakoTopic.forum_id == forum_id).count()
+    def forum_topics_count(forum_id: int, session: OrmSession) -> int:
+        return session.query(DbBaibakoTopic).filter(DbBaibakoTopic.forum_id == forum_id).count()
 
     @staticmethod
-    def clear_forum_topics(forum_id: int, db_session: sqlalchemy.orm.Session) -> None:
-        db_session.query(DbBaibakoTopic).filter(DbBaibakoTopic.forum_id == forum_id).delete()
-        db_session.commit()
+    def clear_forum_topics(forum_id: int, session: OrmSession) -> None:
+        session.query(DbBaibakoTopic).filter(DbBaibakoTopic.forum_id == forum_id).delete()
+        session.commit()
 
     @staticmethod
-    def update_forum_topics(forum_id: int, topics: Set[BaibakoTopic], db_session: sqlalchemy.orm.Session) -> None:
+    def update_forum_topics(forum_id: int, topics: Set[BaibakoTopic], session: OrmSession) -> None:
         # Clear database
-        BaibakoDatabase.clear_forum_topics(forum_id, db_session)
+        BaibakoDatabase.clear_forum_topics(forum_id, session)
 
         # Insert new rows
         if topics and len(topics) > 0:
             now = datetime.now()
             for topic in topics:
                 db_topic = DbBaibakoTopic(id_=topic.id, forum_id=forum_id, title=topic.title, updated_at=now)
-                db_session.add(db_topic)
+                session.add(db_topic)
 
-            db_session.commit()
+            session.commit()
 
     @staticmethod
-    def get_forum_topics(forum_id: int, db_session: sqlalchemy.orm.Session) -> Set[BaibakoTopic]:
+    def get_forum_topics(forum_id: int, session: OrmSession) -> Set[BaibakoTopic]:
         topics = set()
 
-        db_topics = db_session.query(DbBaibakoTopic).filter(DbBaibakoTopic.forum_id == forum_id)
+        db_topics = session.query(DbBaibakoTopic).filter(DbBaibakoTopic.forum_id == forum_id)
         for db_topic in db_topics:
             topic = BaibakoTopic(db_topic.id, db_topic.title)
             topics.add(topic)
@@ -476,23 +452,31 @@ class Baibako(object):
         return '{0}/download.php?id={1}'.format(BASE_URL, topic_id)
 
     @staticmethod
-    def get_forums(requests_: requests) -> Set[BaibakoForum]:
+    def get_forums(requests: RequestsSession) -> Set[BaibakoForum]:
         url = '{0}/serials.php'.format(BASE_URL)
-        response = requests_.get(url)
+        response = requests.get(url)
         response.raise_for_status()
-        return BaibakoParser.parse_forums(response.content)
+        try:
+            return BaibakoParser.parse_forums(response.text)
+        except ParsingError:
+            log.error('Parsing failed: {0}'.format(url))
+            raise
 
     @staticmethod
-    def get_forum_topics(forum_id: int, tab: Text, requests_: requests) -> Set[BaibakoTopic]:
+    def get_forum_topics(forum_id: int, tab: Text, requests: RequestsSession) -> Set[BaibakoTopic]:
         url = '{0}/serial.php?id={1}&tab={2}'.format(BASE_URL, forum_id, tab)
-        response = requests_.get(url)
+        response = requests.get(url)
         response.raise_for_status()
-        return BaibakoParser.parse_topics(response.content)
+        try:
+            return BaibakoParser.parse_topics(response.text)
+        except ParsingError:
+            log.error('Parsing failed: {0}'.format(url))
+            raise
 
     @staticmethod
-    def get_info_hash(requests_: requests, topic_id: int) -> Text:
+    def get_info_hash(requests: RequestsSession, topic_id: int) -> Text:
         download_url = Baibako.get_download_url(topic_id)
-        response = requests_.get(download_url)
+        response = requests.get(download_url)
         response.raise_for_status()
         ContentType.raise_not_torrent(response)
 
@@ -571,9 +555,9 @@ class BaibakoPlugin(object):
             entry['torrent_info_hash'] = info_hash
             entry.accept()
 
-    def _search_forum(self, task: Task, title: Text, db_session: sqlalchemy.orm.Session) -> BaibakoForum:
+    def _search_forum(self, task: Task, title: Text, session: OrmSession) -> BaibakoForum:
         update_required = True
-        db_timestamp = BaibakoDatabase.forums_timestamp(db_session)
+        db_timestamp = BaibakoDatabase.forums_timestamp(session)
         if db_timestamp:
             difference = datetime.now() - db_timestamp
             update_required = difference.days > FORUMS_CACHE_DAYS_LIFETIME
@@ -586,14 +570,13 @@ class BaibakoPlugin(object):
             else:
                 if shows:
                     log.debug('{0} forum(s) received'.format(len(shows)))
-                    BaibakoDatabase.update_forums(shows, db_session)
+                    BaibakoDatabase.update_forums(shows, session)
 
-        return BaibakoDatabase.find_forum_by_title(title, db_session)
+        return BaibakoDatabase.find_forum_by_title(title, session)
 
-    def _search_forum_topics(self, task: Task, forum_id: int, tab: Text,
-                             db_session: sqlalchemy.orm.Session) -> Set[BaibakoTopic]:
+    def _search_forum_topics(self, task: Task, forum_id: int, tab: Text, session: OrmSession) -> Set[BaibakoTopic]:
         update_required = True
-        db_timestamp = BaibakoDatabase.forum_topics_timestamp(forum_id, db_session)
+        db_timestamp = BaibakoDatabase.forum_topics_timestamp(forum_id, session)
         if db_timestamp:
             difference = datetime.now() - db_timestamp
             update_required = difference.days > FORUM_TOPICS_CACHE_DAYS_LIFETIME
@@ -606,74 +589,73 @@ class BaibakoPlugin(object):
             else:
                 if topics:
                     log.debug('{0} topic(s) received for forum `{1}`'.format(len(topics), forum_id))
-                    BaibakoDatabase.update_forum_topics(forum_id, topics, db_session)
+                    BaibakoDatabase.update_forum_topics(forum_id, topics, session)
                     return topics
 
-        return BaibakoDatabase.get_forum_topics(forum_id, db_session)
+        return BaibakoDatabase.get_forum_topics(forum_id, session)
 
     def search(self, task: Task, entry: Entry, config: Dict = None) -> Set[Entry]:
-        db_session = Session()
+        with Session() as session:
+            serial_tab = config.get('serial_tab', 'all')
 
-        serial_tab = config.get('serial_tab', 'all')
+            entries = set()
+            for search_string in entry.get('search_strings', [entry['title']]):
+                search_match = None
+                for search_string_regexp in SEARCH_STRING_REGEXPS:
+                    search_match = search_string_regexp.search(search_string)
+                    if search_match:
+                        break
 
-        entries = set()
-        for search_string in entry.get('search_strings', [entry['title']]):
-            search_match = None
-            for search_string_regexp in SEARCH_STRING_REGEXPS:
-                search_match = search_string_regexp.search(search_string)
-                if search_match:
-                    break
+                if not search_match:
+                    log.warning("Invalid search string: {0}".format(search_string))
+                    continue
 
-            if not search_match:
-                log.warning("Invalid search string: {0}".format(search_string))
-                continue
+                search_title = search_match.group(1)
+                search_season = int(search_match.group(2))
+                search_episode = int(search_match.group(3))
 
-            search_title = search_match.group(1)
-            search_season = int(search_match.group(2))
-            search_episode = int(search_match.group(3))
+                log.debug("{0} s{1:02d}e{2:02d}".format(search_title, search_season, search_episode))
 
-            log.debug("{0} s{1:02d}e{2:02d}".format(search_title, search_season, search_episode))
+                forum = self._search_forum(task, search_title, session)
+                if not forum:
+                    log.debug("Unknown forum: {0} s{1:02d}e{2:02d}".format(search_title, search_season, search_episode))
+                    continue
 
-            forum = self._search_forum(task, search_title, db_session)
-            if not forum:
-                log.warning("Unknown forum: {0} s{1:02d}e{2:02d}".format(search_title, search_season, search_episode))
-                continue
+                topics = self._search_forum_topics(task, forum.id, serial_tab, session)
+                for topic in topics:
+                    try:
+                        topic_info = BaibakoParser.parse_topic_title(topic.title)
+                    except ParsingError as e:
+                        log.warning(e)
+                    else:
+                        if topic_info.season != search_season or not topic_info.contains_episode(search_episode):
+                            continue
 
-            topics = self._search_forum_topics(task, forum.id, serial_tab, db_session)
-            for topic in topics:
-                try:
-                    topic_info = BaibakoParser.parse_topic_title(topic.title)
-                except ParsingError as e:
-                    log.warning(e)
-                else:
-                    if topic_info.season != search_season or not topic_info.contains_episode(search_episode):
-                        continue
+                        episode_id = topic_info.get_episode_id()
 
-                    episode_id = topic_info.get_episode_id()
+                        entry = Entry()
+                        entry['title'] = "{0} / {1} / {2}".format(search_title, episode_id, topic_info.quality)
+                        entry['url'] = Baibako.get_download_url(topic.id)
+                        # entry['series_season'] = topic_info.season
+                        # entry['series_episode'] = topic_info.begin_episode
+                        entry['series_id'] = episode_id
+                        # entry['series_name'] = topic_info.title
+                        # entry['quality'] = topic_info.quality
 
-                    entry = Entry()
-                    entry['title'] = "{0} / {1} / {2}".format(search_title, episode_id, topic_info.quality)
-                    entry['url'] = Baibako.get_download_url(topic.id)
-                    # entry['series_season'] = topic_info.season
-                    # entry['series_episode'] = topic_info.begin_episode
-                    entry['series_id'] = episode_id
-                    # entry['series_name'] = topic_info.title
-                    # entry['quality'] = topic_info.quality
+                        entries.add(entry)
 
-                    entries.add(entry)
-
-        return entries
+            return entries
 
 
 # endregion
 
 
 def reset_cache(manager: Manager) -> None:
-    db_session = Session()
-    db_session.query(DbBaibakoTopic).delete()
-    db_session.query(DbBaibakoForum).delete()
-    # db_session.query(LostFilmAccount).delete()
-    db_session.commit()
+    with Session() as session:
+        session.query(DbBaibakoTopic).delete()
+        session.query(DbBaibakoForum).delete()
+        # session.query(LostFilmAccount).delete()
+        session.commit()
 
     console('The BaibaKo cache has been reset')
 
