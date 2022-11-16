@@ -28,7 +28,7 @@ SCHEMA_VER = 0
 log = logging.getLogger(PLUGIN_NAME)
 Base = versioned_base(PLUGIN_NAME, SCHEMA_VER)
 
-BASE_URL = 'http://kinozal.tv'
+BASE_URL = 'https://kinozal.tv'
 COOKIES_DOMAIN = '.kinozal.tv'
 
 HOST_REGEXP = re.compile(r'^https?://(?:www\.)?(?:.+\.)?kinozal\.tv', flags=re.IGNORECASE)
