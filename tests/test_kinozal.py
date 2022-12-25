@@ -5,6 +5,7 @@ import unittest
 import requests
 import yaml
 
+from plugins.kinozal import KinozalReAuthAdapter
 from . import kinozal, ContentType
 
 
@@ -21,6 +22,10 @@ class TestKinozal(unittest.TestCase):
             self._requests = requests.Session()
             self._requests.auth = self._auth
 
+            adapter = KinozalReAuthAdapter(self._auth)
+            self._requests.mount('https://', adapter)
+            self._requests.mount('http://', adapter)
+
     def tearDown(self):
         self._requests.close()
 
@@ -30,11 +35,11 @@ class TestKinozal(unittest.TestCase):
             print(u"[{0}] {1} -> {2}".format(entry.id, entry.title, entry.url))
 
     def test_info_hash(self):
-        info_hash = kinozal.Kinozal.get_info_hash(self._requests, 1791623)
+        info_hash = kinozal.Kinozal.get_info_hash(self._requests, 1947026)
         self.assertEqual(len(info_hash), 40, "The hash has invalid length: {0}".format(info_hash))
 
     def test_download(self):
-        url = 'http://kinozal.tv/download.php?id={0}'.format(1791623)
+        url = 'http://kinozal.tv/download.php?id={0}'.format(1947026)
         response = self._requests.get(url)
         response.raise_for_status()
         ContentType.raise_not_torrent(response)

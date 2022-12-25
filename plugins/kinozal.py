@@ -16,6 +16,7 @@ from flexget.event import event
 from flexget.manager import Session
 from flexget.plugin import PluginError
 from requests import Session as RequestsSession, PreparedRequest, RequestException
+from requests.adapters import HTTPAdapter
 from requests.auth import AuthBase
 from sqlalchemy import Column, Unicode, Integer, DateTime
 from sqlalchemy.orm import Session as OrmSession
@@ -32,6 +33,7 @@ BASE_URL = 'https://kinozal.tv'
 COOKIES_DOMAIN = '.kinozal.tv'
 
 HOST_REGEXP = re.compile(r'^https?://(?:www\.)?(?:.+\.)?kinozal\.tv', flags=re.IGNORECASE)
+LOGIN_REGEX = re.compile(r'^(https?:)?//(?:www\.)?(?:.+\.)?kinozal\.tv/login\.php(\?.*)?$', flags=re.IGNORECASE)
 
 
 def validate_host(url: Text) -> bool:
@@ -53,7 +55,14 @@ class KinozalAccount(Base):
 
 
 class KinozalAuth(AuthBase):
-    def try_authenticate(self, payload):
+    def __init__(self, username: Text, password: Text, cookies: Dict = None, session: OrmSession = None) -> None:
+        self.__username = username
+        self.__password = password
+        self.__session = session
+        self.__cookies = cookies or self.__read_cookies()
+
+    @staticmethod
+    def __try_authenticate(payload) -> Dict:
         for _ in range(5):
             with RequestsSession() as session:
                 response = session.post('{0}/takelogin.php'.format(BASE_URL), data=payload)
@@ -67,30 +76,82 @@ class KinozalAuth(AuthBase):
 
         raise PluginError('Unable to obtain cookies from Kinozal. Looks like invalid username or password.')
 
-    def __init__(self, username: Text, password: Text, cookies: Dict = None, session: OrmSession = None) -> None:
-        if cookies is None:
-            log.debug('Kinozal cookie not found. Requesting new one.')
-            payload_ = {'username': username, 'password': password}
-            self.__cookies = self.try_authenticate(payload_)
-            if session:
-                session.add(
-                    KinozalAccount(
-                        username=username,
-                        cookies=self.__cookies,
-                        expiry_time=datetime.now() + timedelta(days=1)))
-                session.commit()
-                # else:
-                #     raise ValueError(
-                #         'session can not be None if cookies is None')
-        else:
+    def __read_cookies(self) -> Optional[Dict]:
+        if not self.__session:
+            return None
+
+        account = self.__session.query(KinozalAccount).filter(KinozalAccount.username == self.__username).first()
+        if not account:
+            return None
+
+        if account.expiry_time < datetime.now():
+            self.__session.delete(account)
+            self.__session.commit()
+            return None
+
+        return account.cookies
+
+    def __write_cookies(self, cookies: Optional[Dict]) -> None:
+        if not self.__session:
+            return
+
+        if not cookies:
+            account = self.__session.query(KinozalAccount).filter(KinozalAccount.username == self.__username).first()
+            if not account:
+                return
+
+            self.__session.delete(account)
+            self.__session.commit()
+            return
+
+        self.__session.add(
+            KinozalAccount(
+                username=self.__username,
+                cookies=cookies,
+                expiry_time=datetime.now() + timedelta(days=1)))
+        self.__session.commit()
+
+    def __get_cookies(self) -> Dict:
+        if self.__cookies:
             log.debug('Using previously saved cookie.')
-            self.__cookies = cookies
+            return self.__cookies
+
+        log.debug('Kinozal cookie not found. Requesting new one.')
+        payload_ = {'username': self.__username, 'password': self.__password}
+        self.__cookies = self.__try_authenticate(payload_)
+        self.__write_cookies(self.__cookies)
+
+        return self.__cookies
+
+    def reset_cookies(self):
+        self.__cookies = None
+        self.__write_cookies(None)
+
+    def prepare_request(self, request: PreparedRequest) -> PreparedRequest:
+        if validate_host(request.url):
+            cookies = self.__get_cookies()
+            request.headers['Cookie'] = '; '.join('{0}={1}'.format(key, val) for key, val in cookies.items())
+        return request
 
     def __call__(self, request: PreparedRequest) -> PreparedRequest:
-        # request.prepare_cookies(self.__cookies)
-        if validate_host(request.url):
-            request.headers['Cookie'] = '; '.join('{0}={1}'.format(key, val) for key, val in self.__cookies.items())
-        return request
+        return self.prepare_request(request)
+
+
+class KinozalReAuthAdapter(HTTPAdapter):
+    def __init__(self, auth: KinozalAuth):
+        super().__init__()
+        self.__auth = auth
+
+    def send(self, request, stream=False, timeout=None, verify=True, cert=None, proxies=None):
+        response = super().send(request, stream, timeout, verify, cert, proxies)
+        if response.status_code == 302:
+            redirect_location = response.headers.get('location')
+            if LOGIN_REGEX.match(redirect_location):
+                self.__auth.reset_cookies()
+                request = self.__auth.prepare_request(request)
+                response = super().send(request, stream, timeout, verify, cert, proxies)
+
+        return response
 
 
 class KinozalAuthPlugin(object):
@@ -123,7 +184,7 @@ class KinozalAuthPlugin(object):
         else:
             return None
 
-    def get_auth_handler(self, config: Dict) -> Dict:
+    def get_auth_handler(self, config: Dict) -> KinozalAuth:
         username = config.get('username')
         if not username or len(username) <= 0:
             raise PluginError('Username are not configured.')
@@ -132,8 +193,8 @@ class KinozalAuthPlugin(object):
             raise PluginError('Password are not configured.')
 
         with Session() as session:
-            cookies = self.try_find_cookie(session, username)
             if username not in self.auth_cache:
+                cookies = self.try_find_cookie(session, username)
                 auth_handler = KinozalAuth(username, password, cookies, session)
                 self.auth_cache[username] = auth_handler
             else:
@@ -143,7 +204,12 @@ class KinozalAuthPlugin(object):
 
     @plugin.priority(plugin.PRIORITY_DEFAULT)
     def on_task_start(self, task, config):
-        task.requests.auth = self.get_auth_handler(config)
+        auth = self.get_auth_handler(config)
+        task.requests.auth = auth
+
+        adapter = KinozalReAuthAdapter(auth)
+        task.requests.mount('https://', adapter)
+        task.requests.mount('http://', adapter)
 
     # Run before all downloads
     @plugin.priority(plugin.PRIORITY_FIRST)
