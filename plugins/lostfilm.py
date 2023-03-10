@@ -47,44 +47,6 @@ class LostFilmAjaxik(object):
         return requests.post(BASE_URL + '/ajaxik.php', data=payload, headers=headers)
 
 
-class FlareSolverrChallenge:
-    def __init__(self, cf_clearance: Text, user_agent: Text):
-        self.cf_clearance = cf_clearance
-        self.user_agent = user_agent
-
-
-class FlareSolverr:
-    USER_AGENT = 'Mozilla/5.0 (X11; Linux x86_64; rv:94.0) Gecko/20100101 Firefox/94.0'
-
-    def __init__(self, endpoint):
-        self._endpoint = endpoint
-
-    def challenge(self, url: Text) -> Optional[FlareSolverrChallenge]:
-        headers = {
-            'User-Agent': self.USER_AGENT,
-            'Content-Type': 'application/json'
-        }
-
-        payload = json.dumps({
-            'cmd': 'request.get',
-            'url': url,
-            'returnOnlyCookies': True
-        })
-
-        with RequestsSession() as session:
-            response = session.post(self._endpoint, data=payload, headers=headers)
-            data = response.json()
-            cookies = data['solution']['cookies']
-            for cookie in cookies:
-                if cookie['name'] != 'cf_clearance':
-                    continue
-
-                cf_clearance = cookie['value']
-                return FlareSolverrChallenge(cf_clearance, self.USER_AGENT)
-
-        return None
-
-
 # region LostFilmAuthPlugin
 class LostFilmAccount(Base):
     __tablename__ = 'lostfilm_accounts'
@@ -108,38 +70,34 @@ class LostFilmAuth(AuthBase):
 
     def try_authenticate(self, payload: Dict) -> Dict:
         for _ in range(5):
-            with RequestsSession() as session:
-                if self.__fs_challenge:
-                    session.headers.update({'User-Agent': self.__fs_challenge.user_agent})
-                    session.cookies.set('cf_clearance', self.__fs_challenge.cf_clearance)
+            headers = {'Referer': BASE_URL + '/login'}
+            response = LostFilmAjaxik.post(self.__requests, payload, headers=headers)
+            response.raise_for_status()
 
-                headers = {'Referer': BASE_URL + '/login'}
-                response = LostFilmAjaxik.post(session, payload, headers=headers)
-                response.raise_for_status()
+            response_json = response.json()
+            if 'need_captcha' in response_json and response_json['need_captcha']:
+                raise PluginError('Unable to obtain cookies from LostFilm. Captcha is required. '
+                                  'Please logout from you account using web browser (Chrome, Firefox, Safari, etc.) '
+                                  'and login again with captcha. Then try again.')
+            if 'error' in response_json:
+                raise PluginError('Unable to obtain cookies from LostFilm. The error was caused: {0}'.format(
+                    response_json['error']))
 
-                response_json = response.json()
-                if 'need_captcha' in response_json and response_json['need_captcha']:
-                    raise PluginError('Unable to obtain cookies from LostFilm. Captcha is required. '
-                                      'Please logout from you account using web browser (Chrome, Firefox, Safari, etc.) '
-                                      'and login again with captcha. Then try again.')
-                if 'error' in response_json:
-                    raise PluginError('Unable to obtain cookies from LostFilm. The error was caused: {0}'.format(
-                        response_json['error']))
-
-                if 'success' in response_json and response_json['success']:
-                    # username = response_json['name']
-                    cookies = session.cookies.get_dict(domain=COOKIES_DOMAIN)
-                    if cookies and len(cookies) > 0:
-                        return cookies
+            if 'success' in response_json and response_json['success']:
+                # username = response_json['name']
+                cookies = response.cookies.get_dict(domain=COOKIES_DOMAIN)
+                if cookies and len(cookies) > 0:
+                    return cookies
 
             sleep(3)
 
         raise PluginError('Unable to obtain cookies from LostFilm. Looks like invalid username or password.')
 
     def __init__(self, username: Text, password: Text, cookies: Dict = None,
-                 flaresolverr: FlareSolverr = None,
+                 requests: RequestsSession = None,
                  session: OrmSession = None) -> None:
-        self.__fs_challenge = flaresolverr.challenge(BASE_URL) if flaresolverr else None
+        self.__del_requests = requests is None
+        self.__requests = requests or RequestsSession()
 
         if cookies is None:
             log.debug('LostFilm cookie not found. Requesting new one.')
@@ -169,15 +127,14 @@ class LostFilmAuth(AuthBase):
             log.debug('Using previously saved cookie.')
             self.__cookies = cookies
 
+    def __del__(self):
+        if self.__del_requests:
+            del self.__requests
+        self.__requests = None
+
     def __call__(self, request: PreparedRequest) -> PreparedRequest:
         if validate_host(request.url):
-            cookie = '; '.join('{0}={1}'.format(key, val) for key, val in self.__cookies.items())
-
-            if self.__fs_challenge:
-                request.headers.update({'User-Agent': self.__fs_challenge.user_agent})
-                cookie = cookie + '; cf_clearance=' + self.__fs_challenge.cf_clearance
-
-            request.headers.update({'Cookie': cookie})
+            request.prepare_cookies(self.__cookies)
         return request
 
 
@@ -187,15 +144,13 @@ class LostFilmAuthPlugin(object):
     lostfilm_auth:
       username: 'username_here'
       password: 'password_here'
-      flaresolverr: 'flaresolverr_address'
     """
 
     schema = {
         'type': 'object',
         'properties': {
             'username': {'type': 'string'},
-            'password': {'type': 'string'},
-            'flaresolverr': {'type': 'string'}
+            'password': {'type': 'string'}
         },
         'additionalProperties': False
     }
@@ -213,7 +168,7 @@ class LostFilmAuthPlugin(object):
         else:
             return None
 
-    def get_auth_handler(self, config: Dict) -> LostFilmAuth:
+    def get_auth_handler(self, requests: RequestsSession, config: Dict) -> LostFilmAuth:
         username = config.get('username')
         if not username or len(username) <= 0:
             raise PluginError('Username are not configured.')
@@ -224,13 +179,7 @@ class LostFilmAuthPlugin(object):
         with Session() as session:
             cookies = self.try_find_cookie(session, username)
             if username not in self.auth_cache:
-                flaresolverr_endpoint = config.get('flaresolverr')
-                if flaresolverr_endpoint and len(flaresolverr_endpoint) > 0:
-                    flaresolverr = FlareSolverr(flaresolverr_endpoint)
-                else:
-                    flaresolverr = None
-
-                auth_handler = LostFilmAuth(username, password, cookies, flaresolverr, session)
+                auth_handler = LostFilmAuth(username, password, cookies, requests, session)
                 self.auth_cache[username] = auth_handler
             else:
                 auth_handler = self.auth_cache[username]
@@ -239,7 +188,7 @@ class LostFilmAuthPlugin(object):
 
     @plugin.priority(plugin.PRIORITY_DEFAULT)
     def on_task_start(self, task: Task, config: Dict) -> None:
-        task.requests.auth = self.get_auth_handler(config)
+        task.requests.auth = self.get_auth_handler(task.requests, config)
 
     # Run before all downloads
     @plugin.priority(plugin.PRIORITY_FIRST)
@@ -256,7 +205,7 @@ class LostFilmAuthPlugin(object):
 
             username = config.get('username')
             log.debug('setting auth with username %s', username)
-            entry['download_auth'] = self.get_auth_handler(config)
+            entry['download_auth'] = self.get_auth_handler(task.requests, config)
 
 
 # endregion

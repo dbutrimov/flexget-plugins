@@ -3,4 +3,4 @@ import sys
 
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 
-from plugins import alexfilm, baibako, kinozal, lostfilm, newstudio, ContentType
+from plugins import alexfilm, baibako, kinozal, lostfilm, newstudio, flaresolverr, clearance, ContentType

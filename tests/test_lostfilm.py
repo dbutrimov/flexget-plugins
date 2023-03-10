@@ -1,33 +1,44 @@
 # -*- coding: utf-8 -*-
 
+from typing import Optional
+
 import requests
 import unittest
 import yaml
 
-from . import lostfilm, ContentType
+from . import lostfilm, flaresolverr, clearance, ContentType
 
 
 class TestLostFilm(unittest.TestCase):
     def setUp(self):
         with open("test_config.yml", 'r') as stream:
             config = yaml.safe_load(stream)
+            clearance_config = config['clearance']
+            flaresolverr_config = config['flaresolverr']
             config = config['secrets']['lostfilm']
 
             self._username = config['username']
             self._password = config['password']
 
-            flaresolverr_endpoint = config.get('flaresolverr')
-            if flaresolverr_endpoint and len(flaresolverr_endpoint) > 0:
-                flaresolverr = lostfilm.FlareSolverr(flaresolverr_endpoint)
+            if clearance_config:
+                endpoint = clearance_config \
+                    if isinstance(clearance_config, str) \
+                    else clearance_config.get('endpoint')
+                self._requests = clearance.Clearance.create_clearance(endpoint)
+            elif flaresolverr_config:
+                endpoint = flaresolverr_config \
+                    if isinstance(flaresolverr_config, str) \
+                    else flaresolverr_config.get('endpoint')
+                self._requests = flaresolverr.FlareSolverr.create_solverr(endpoint)
             else:
-                flaresolverr = None
+                self._requests = requests.Session()
 
-            self._auth = lostfilm.LostFilmAuth(self._username, self._password, flaresolverr=flaresolverr)
-            self._requests = requests.Session()
+            self._auth = lostfilm.LostFilmAuth(self._username, self._password, requests=self._requests)
             self._requests.auth = self._auth
 
     def tearDown(self):
-        self._requests.close()
+        del self._requests
+        del self._auth
 
     def test_shows(self):
         shows = lostfilm.LostFilm.get_shows(self._requests)
@@ -38,7 +49,7 @@ class TestLostFilm(unittest.TestCase):
         self.assertRaises(Exception)
 
     def test_episode(self):
-        episode = lostfilm.LostFilm.get_show_episode(self._requests, 'The_Blacklist', 5, 11)
+        episode = lostfilm.LostFilm.get_show_episode(self._requests, 'The_Rookie', 5, 17)
         print(u"[{0} - s{1:02d}e{2:02d}] {3}".format(episode.show_id, episode.season, episode.episode, episode.title))
 
         torrents = lostfilm.LostFilm.get_episode_torrents(
@@ -57,7 +68,7 @@ class TestLostFilm(unittest.TestCase):
         self.assertRaises(Exception)
 
     def test_episode_torrents(self):
-        torrents = lostfilm.LostFilm.get_episode_torrents(self._requests, 412, 1, 5)
+        torrents = lostfilm.LostFilm.get_episode_torrents(self._requests, 384, 5, 17)
         for torrent in torrents:
             print(u"[{0}] {1} - {2}".format(torrent.label, torrent.title, torrent.url))
 
