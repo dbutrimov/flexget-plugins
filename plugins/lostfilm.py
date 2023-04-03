@@ -134,7 +134,7 @@ class LostFilmAuth(AuthBase):
 
     def __call__(self, request: PreparedRequest) -> PreparedRequest:
         if validate_host(request.url):
-            request.prepare_cookies(self.__cookies)
+            request.headers['Cookie'] = '; '.join('{0}={1}'.format(key, val) for key, val in self.__cookies.items())
         return request
 
 
