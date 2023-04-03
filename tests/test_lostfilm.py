@@ -13,8 +13,8 @@ class TestLostFilm(unittest.TestCase):
     def setUp(self):
         with open("test_config.yml", 'r') as stream:
             config = yaml.safe_load(stream)
-            clearance_config = config['clearance']
-            flaresolverr_config = config['flaresolverr']
+            clearance_config = config.get('clearance')
+            flaresolverr_config = config.get('flaresolverr')
             config = config['secrets']['lostfilm']
 
             self._username = config['username']
