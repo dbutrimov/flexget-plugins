@@ -19,6 +19,7 @@ from flexget.plugin import PluginError
 from flexget.task import Task
 from flexget.terminal import console
 from requests import Session as RequestsSession, PreparedRequest
+from requests.adapters import HTTPAdapter
 from requests.auth import AuthBase
 from sqlalchemy import Column, Unicode, Integer, DateTime, func
 from sqlalchemy.orm import Session as OrmSession
@@ -35,8 +36,7 @@ BASE_URL = 'http://baibako.tv'
 COOKIES_DOMAIN = 'baibako.tv'
 
 HOST_REGEXP = re.compile(r'^https?://(?:www\.)?(?:.+\.)?baibako\.tv', flags=re.IGNORECASE)
-
-USER_AGENT = 'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/45.0.2454.85 Safari/537.36'
+LOGIN_REGEX = re.compile(r'^(https?:)?//(?:www\.)?(?:.+\.)?baibako\.tv/login\.php(\?.*)?$', flags=re.IGNORECASE)
 
 
 def validate_host(url: Text) -> bool:
@@ -64,11 +64,17 @@ class BaibakoAuth(AuthBase):
     and cookies will be just set
     """
 
-    def try_authenticate(self, payload: Dict) -> Dict:
+    def __init__(self, username: Text, password: Text, cookies: Dict = None, session: OrmSession = None) -> None:
+        self.__username = username
+        self.__password = password
+        self.__session = session
+
+        self.__cookies = cookies or self.__read_cookies()
+
+    @staticmethod
+    def __try_authenticate(payload: Dict) -> Dict:
         for _ in range(5):
             with RequestsSession() as session:
-                session.headers.update({'User-Agent': USER_AGENT})
-
                 response = session.post('{0}/takelogin.php'.format(BASE_URL), data=payload)
                 response.raise_for_status()
 
@@ -80,33 +86,84 @@ class BaibakoAuth(AuthBase):
 
         raise PluginError('Unable to obtain cookies from Baibako. Looks like invalid username or password.')
 
-    def __init__(self, username: Text, password: Text, cookies: Dict = None, session: OrmSession = None) -> None:
-        if cookies is None:
-            log.debug('Baibako cookie not found. Requesting new one.')
-            payload_ = {'username': username, 'password': password}
-            self.__cookies = self.try_authenticate(payload_)
-            if session:
-                session.add(
-                    BaibakoAccount(
-                        username=username,
-                        cookies=self.__cookies,
-                        expiry_time=datetime.now() + timedelta(days=1)))
-                session.commit()
-            # else:
-            #     raise ValueError(
-            #         'session can not be None if cookies is None')
-        else:
-            log.debug('Using previously saved cookie.')
-            self.__cookies = cookies
+    def __read_cookies(self) -> Optional[Dict]:
+        if not self.__session:
+            return None
 
-    def __call__(self, request: PreparedRequest) -> PreparedRequest:
-        # request.prepare_cookies(self.__cookies)
+        account = self.__session.query(BaibakoAccount).filter(BaibakoAccount.username == self.__username).first()
+        if not account:
+            return None
+
+        if account.expiry_time < datetime.now():
+            self.__session.delete(account)
+            self.__session.commit()
+            return None
+
+        return account.cookies
+
+    def __write_cookies(self, cookies: Optional[Dict]) -> None:
+        if not self.__session:
+            return
+
+        if not cookies:
+            account = self.__session.query(BaibakoAccount).filter(BaibakoAccount.username == self.__username).first()
+            if not account:
+                return
+
+            self.__session.delete(account)
+            self.__session.commit()
+            return
+
+        self.__session.add(
+            BaibakoAccount(
+                username=self.__username,
+                cookies=cookies,
+                expiry_time=datetime.now() + timedelta(days=1)))
+        self.__session.commit()
+
+    def __get_cookies(self) -> Dict:
+        if self.__cookies:
+            log.debug('Using previously saved cookie.')
+            return self.__cookies
+
+        log.debug('Baibako cookie not found. Requesting new one.')
+        payload_ = {'username': self.__username, 'password': self.__password}
+        self.__cookies = self.__try_authenticate(payload_)
+        self.__write_cookies(self.__cookies)
+
+        return self.__cookies
+
+    def reset_cookies(self):
+        self.__cookies = None
+        self.__write_cookies(None)
+
+    def prepare_request(self, request: PreparedRequest) -> PreparedRequest:
         if validate_host(request.url):
+            cookies = self.__get_cookies()
             request.headers.update({
-                'User-Agent': USER_AGENT,
-                'Cookie': '; '.join('{0}={1}'.format(key, val) for key, val in self.__cookies.items())
+                'Cookie': '; '.join('{0}={1}'.format(key, val) for key, val in cookies.items())
             })
         return request
+
+    def __call__(self, request: PreparedRequest) -> PreparedRequest:
+        return self.prepare_request(request)
+
+
+class BaibakoAuthAdapter(HTTPAdapter):
+    def __init__(self, auth: BaibakoAuth):
+        super().__init__()
+        self.__auth = auth
+
+    def send(self, request, stream=False, timeout=None, verify=True, cert=None, proxies=None):
+        response = super().send(request, stream, timeout, verify, cert, proxies)
+        if response.status_code == 302:
+            redirect_location = response.headers.get('location')
+            if LOGIN_REGEX.match(redirect_location):
+                self.__auth.reset_cookies()
+                request = self.__auth.prepare_request(request)
+                response = super().send(request, stream, timeout, verify, cert, proxies)
+
+        return response
 
 
 class BaibakoAuthPlugin(object):
@@ -159,7 +216,12 @@ class BaibakoAuthPlugin(object):
 
     @plugin.priority(plugin.PRIORITY_DEFAULT)
     def on_task_start(self, task: Task, config: Dict) -> None:
-        task.requests.auth = self.get_auth_handler(config)
+        auth = self.get_auth_handler(config)
+        task.requests.auth = auth
+
+        adapter = BaibakoAuthAdapter(auth)
+        task.requests.mount('https://', adapter)
+        task.requests.mount('http://', adapter)
 
     # Run before all downloads
     @plugin.priority(plugin.PRIORITY_FIRST)

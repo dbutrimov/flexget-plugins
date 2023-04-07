@@ -17,8 +17,12 @@ class TestBaibako(unittest.TestCase):
             self._username = config['username']
             self._password = config['password']
 
-            self._auth = baibako.BaibakoAuth(self._username, self._password)
             self._requests = requests.Session()
+            self._requests.headers.update({
+                'user-agent': 'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/45.0.2454.85 Safari/537.36'
+            })
+
+            self._auth = baibako.BaibakoAuth(self._username, self._password)
             self._requests.auth = self._auth
 
     def tearDown(self):
