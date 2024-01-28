@@ -302,6 +302,10 @@ class ParsingError(Exception):
 class BaibakoParser(object):
     @staticmethod
     def parse_topic_id(url: Text) -> Optional[int]:
+        match = HOST_REGEXP.search(url)
+        if not match:
+            return None
+
         match = TOPIC_ID_REGEXP.search(url)
         if not match:
             return None
