@@ -298,7 +298,9 @@ SORT_ORDER = {
     'asc': 1
 }
 
-DETAILS_URL_REGEXP = re.compile(r'^https?://(?:www\.)?kinozal\.tv/details\.php\?id=(\d+).*$', flags=re.IGNORECASE)
+DETAILS_URL_REGEXP = re.compile(
+    r'^https?://(?:www\.)?kinozal\.(?:tv|guru|me)/details\.php\?id=(\d+).*$',
+    flags=re.IGNORECASE)
 INFO_HASH_REGEXP = re.compile(r'^.*\s+(\w+)$', flags=re.IGNORECASE)
 
 
