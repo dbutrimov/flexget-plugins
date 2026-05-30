@@ -30,14 +30,13 @@ log = logging.getLogger(PLUGIN_NAME)
 Base = versioned_base(PLUGIN_NAME, SCHEMA_VER)
 
 BASE_URL = 'https://kinozal.tv'
-COOKIES_DOMAIN = '.kinozal.tv'
 
-HOST_REGEXP = re.compile(r'^https?://(?:www\.)?(?:.+\.)?kinozal\.tv', flags=re.IGNORECASE)
-LOGIN_REGEX = re.compile(r'^(https?:)?//(?:www\.)?(?:.+\.)?kinozal\.tv/login\.php(\?.*)?$', flags=re.IGNORECASE)
-
-
-def validate_host(url: Text) -> bool:
-    return HOST_REGEXP.match(url) is not None
+HOST_REGEXP = re.compile(
+    r'^((?:(https?)://)?(?:www\.)?((?:[^.]+\.)?(kinozal\.(?:tv|guru|me))))(?:/.*)?$',
+    flags=re.IGNORECASE)
+LOGIN_REGEX = re.compile(
+    r'^((?:(https?)://)?(?:www\.)?((?:[^.]+\.)?(kinozal\.(?:tv|guru|me))))/login\.php(\?.*)?$',
+    flags=re.IGNORECASE)
 
 
 # region KinozalAuthPlugin
@@ -62,13 +61,20 @@ class KinozalAuth(AuthBase):
         self.__cookies = cookies or self.__read_cookies()
 
     @staticmethod
-    def __try_authenticate(payload) -> Dict:
+    def __try_authenticate(url, payload) -> Dict:
+        match = Kinozal.match_url(url)
+        if not match:
+            raise PluginError('Invalid url `{0}`'.format(url))
+        base_url = match['origin']
+
+        domain = match['domain']
+        cookies_domain = '.{0}'.format(domain)
         for _ in range(5):
             with RequestsSession() as session:
-                response = session.post('{0}/takelogin.php'.format(BASE_URL), data=payload)
+                response = session.post('{0}/takelogin.php'.format(base_url), data=payload)
                 response.raise_for_status()
 
-                cookies = session.cookies.get_dict(domain=COOKIES_DOMAIN)
+                cookies = session.cookies.get_dict(domain=cookies_domain)
                 if cookies and len(cookies) > 0:
                     return cookies
 
@@ -111,14 +117,14 @@ class KinozalAuth(AuthBase):
                 expiry_time=datetime.now() + timedelta(days=1)))
         self.__session.commit()
 
-    def __get_cookies(self) -> Dict:
+    def __get_cookies(self, url) -> Dict:
         if self.__cookies:
             log.debug('Using previously saved cookie.')
             return self.__cookies
 
         log.debug('Kinozal cookie not found. Requesting new one.')
         payload_ = {'username': self.__username, 'password': self.__password}
-        self.__cookies = self.__try_authenticate(payload_)
+        self.__cookies = self.__try_authenticate(url, payload_)
         self.__write_cookies(self.__cookies)
 
         return self.__cookies
@@ -128,8 +134,10 @@ class KinozalAuth(AuthBase):
         self.__write_cookies(None)
 
     def prepare_request(self, request: PreparedRequest) -> PreparedRequest:
-        if validate_host(request.url):
-            cookies = self.__get_cookies()
+        match = Kinozal.match_url(request.url)
+        if match:
+            base_url = match['origin']
+            cookies = self.__get_cookies(base_url)
             request.headers['Cookie'] = '; '.join('{0}={1}'.format(key, val) for key, val in cookies.items())
         return request
 
@@ -220,7 +228,9 @@ class KinozalAuthPlugin(object):
                 continue
 
             url = entry['url']
-            if not validate_host(url):
+
+            match = Kinozal.match_url(url)
+            if not match:
                 log.debug('entry %s has invalid host, skipping', entry)
                 continue
 
@@ -387,8 +397,22 @@ class KinozalParser(object):
 
 class Kinozal(object):
     @staticmethod
-    def get_info_hash(requests: RequestsSession, topic_id: int) -> Optional[Text]:
-        response = requests.get('{0}/get_srv_details.php?id={1}&action=2'.format(BASE_URL, topic_id))
+    def match_url(url: Text) -> Optional[Dict]:
+        match = HOST_REGEXP.match(url)
+        if not match:
+            return None
+
+        return {
+            'origin': match.group(1),
+            'scheme': match.group(2),
+            'host': match.group(3),
+            'domain': match.group(4),
+        }
+
+    @staticmethod
+    def get_info_hash(requests: RequestsSession, topic_id: int, base_url=BASE_URL) -> Optional[Text]:
+        base_url = BASE_URL if not base_url else base_url
+        response = requests.get('{0}/get_srv_details.php?id={1}&action=2'.format(base_url, topic_id))
         response.raise_for_status()
         return KinozalParser.parse_info_hash(response.text)
 
@@ -396,7 +420,8 @@ class Kinozal(object):
     def search(requests: RequestsSession, search_string, page=0,
                category=DEFAULT_CATEGORY, quality=DEFAULT_QUALITY,
                filter_=DEFAULT_FILTER, sort_by=DEFAULT_SORT,
-               sort_order=DEFAULT_SORT_ORDER) -> Optional[Set[KinozalSearchEntry]]:
+               sort_order=DEFAULT_SORT_ORDER,
+               base_url=BASE_URL) -> Optional[Set[KinozalSearchEntry]]:
         payload = {
             'page': page,
             's': search_string,
@@ -409,7 +434,9 @@ class Kinozal(object):
             'f': sort_order
         }
 
-        response = requests.get('{0}/browse.php'.format(BASE_URL), params=payload)
+        base_url = BASE_URL if not base_url else base_url
+
+        response = requests.get('{0}/browse.php'.format(base_url), params=payload)
         response.raise_for_status()
 
         return KinozalParser.parse_search_result(response.text, response.url)
@@ -421,9 +448,11 @@ class KinozalPlugin(object):
     schema = {
         'oneOf': [
             {'type': 'boolean'},
+            {'type': 'string'},
             {
                 'type': 'object',
                 'properties': {
+                    'origin': {'type': 'string'},
                     'category': {
                         'oneOf': [
                             {'type': 'string', 'enum': list(CATEGORIES)},
@@ -465,12 +494,19 @@ class KinozalPlugin(object):
 
     def url_rewrite(self, task, entry):
         url = entry['url']
+
+        match = Kinozal.match_url(url)
+        if not match:
+            log.warning("Url don't matched: {0}".format(url))
+            return False
+        base_url = match['origin']
+
         topic_id = KinozalParser.parse_topic_id(url)
         if not topic_id:
             log.warning("Url don't matched: {0}".format(url))
             return False
 
-        url = '{0}/download.php?id={1}'.format(BASE_URL, topic_id)
+        url = '{0}/download.php?id={1}'.format(base_url, topic_id)
         entry['url'] = url
         return True
 
@@ -481,6 +517,13 @@ class KinozalPlugin(object):
             return
         for entry in task.entries:
             url = entry['url']
+
+            match = Kinozal.match_url(url)
+            if not match:
+                log.debug('Invalid url `{0}`, skipping'.format(url))
+                continue
+            base_url = match['origin']
+
             topic_id = KinozalParser.parse_topic_id(url)
             if not topic_id:
                 log.debug('Invalid url `{0}`, skipping'.format(url))
@@ -489,7 +532,7 @@ class KinozalPlugin(object):
                 log.debug('Entry {0} has no torrent_info_hash, skipping'.format(entry))
                 continue
             torrent_info_hash = entry['torrent_info_hash'].lower()
-            info_hash = Kinozal.get_info_hash(task.requests, topic_id)
+            info_hash = Kinozal.get_info_hash(task.requests, topic_id, base_url=base_url)
             log.debug('Equals hash info {0} with {1}...'.format(torrent_info_hash, info_hash))
             if torrent_info_hash == info_hash:
                 entry.reject('Already up-to-date torrent with this infohash')
@@ -499,11 +542,20 @@ class KinozalPlugin(object):
             entry.accept()
 
     def search(self, task, entry, config=None):
+        base_url = None
+        if isinstance(config, str):
+            base_url = config
+
         if not isinstance(config, dict):
             config = {}
 
+        base_url = config.get('origin', BASE_URL) if not base_url else base_url
+        match = Kinozal.match_url(base_url)
+        if not match:
+            raise PluginError('Invalid origin: {0}'.format(base_url))
+
         category = config.get('category', DEFAULT_CATEGORY)
-        if not isinstance(config, int):
+        if not isinstance(category, int):
             category = CATEGORIES.get(category, DEFAULT_CATEGORY)
 
         quality = config.get('quality', DEFAULT_QUALITY)
@@ -528,7 +580,8 @@ class KinozalPlugin(object):
                 search_result = Kinozal.search(task.requests, search_string,
                                                category=category, quality=quality,
                                                filter_=filter, sort_by=sort_by,
-                                               sort_order=sort_order)
+                                               sort_order=sort_order,
+                                               base_url=base_url)
             except RequestException as e:
                 log.error("Error while fetching page: {0}".format(e))
                 sleep(3)
