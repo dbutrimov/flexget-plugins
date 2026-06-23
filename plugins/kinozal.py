@@ -508,8 +508,11 @@ class KinozalPlugin(object):
             log.warning("Url don't matched: {0}".format(url))
             return False
 
+        entry['original_url'] = url
+
         url = '{0}/download.php?id={1}'.format(base_url, topic_id)
         entry['url'] = url
+
         return True
 
     @plugin.priority(plugin.PRIORITY_LAST)
